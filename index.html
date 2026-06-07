@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#080d1a">
+<title>健康管理ダッシュボード</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#080d1a;color:#e2e8f0;font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif;overscroll-behavior:none;}
+  input,select,textarea{font-family:inherit;}
+  input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;}
+  ::-webkit-scrollbar{width:4px;height:4px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:rgba(99,102,241,.4);border-radius:2px;}
+  .tab-scroll{display:flex;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+  .tab-scroll::-webkit-scrollbar{display:none;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const {useState,useEffect,useRef,createElement:h,Fragment} = React;
+// ── Storage ──
+const store={
+  get:k=>{try{return localStorage.getItem(k)}catch{return null}},
+  set:(k,v)=>{try{localStorage.setItem(k,v)}catch{}}
+};
+
+// ── BP Evaluation (Japanese) ──
+function evalBP(sys,dia,pulse){
+  let status="正常",color="#22c55e",advice=[];
+  if(sys>=180||dia>=120){status="高血圧クライシス";color="#dc2626";advice.push("すぐに医師へ連絡してください");}
+  else if(sys>=160||dia>=100){status="高血圧2度";color="#ef4444";advice.push("医師への相談を推奨します","塩分摂取を減らしてください");}
+  else if(sys>=140||dia>=90){status="高血圧1度";color="#f97316";advice.push("減塩食を継続してください","ストレス管理が重要です");}
+  else if(sys>=130||dia>=80){status="注意血圧";color="#eab308";advice.push("生活習慣の改善を推奨します");}
+  else if(sys>=120&&dia<80){status="やや高め";color="#84cc16";advice.push("現状を維持しましょう");}
+  else if(sys<90||dia<60){status="低血圧";color="#6366f1";advice.push("起立性低血圧に注意","水分摂取を増やしてください");}
+  else{advice.push("素晴らしい数値です！");}
+  if(pulse>100)advice.push("脈拍が速い — 安静後に再測定");
+  else if(pulse&&pulse<50)advice.push("脈拍が遅い — 医師に確認を");
+  return{status,color,advice};
+}
+
+// ── CSV parser ──
+function parseCSV(text){
+  return text.trim().split("\n").reduce((acc,line)=>{
+    const cols=line.split(",").map(c=>c.trim().replace(/"/g,""));
+    if(cols.length>=3){
+      const nums=cols.slice(1).map(Number).filter(n=>!isNaN(n));
+      if(nums.length>=2)acc.push({date:cols[0],sys:nums[0],dia:nums[1],pulse:nums[2]||null});
+    }
+    return acc;
+  },[]);
+}
+
+// ── Meal scorer (Japanese keywords) ──
+function scoreMeal(meal){
+  if(!meal)return null;
+  const m=meal;
+  let score=50,tags=[];
+  const good=[
+    ["野菜","サラダ","ほうれん草","ブロッコリー","にんじん","きのこ","大根","キャベツ"],
+    ["豆腐","魚","鮭","サバ","さんま","鶏むね肉","卵","納豆"],
+    ["雑穀","玄米","オートミール","押麦","もち麦"]
+  ];
+  const bad=[
+    ["ラーメン","うどん","そば","パスタ"],
+    ["揚げ物","天ぷら","唐揚げ","とんかつ","フライ"],
+    ["ケーキ","お菓子","チョコ","アイス","菓子パン"],
+    ["ビール","日本酒","ワイン","焼酎","お酒"]
+  ];
+  good.forEach(g=>g.forEach(w=>{if(m.includes(w)){score+=8;tags.push({t:"✅ "+w,c:"#22c55e"});}}));
+  bad.forEach(b=>b.forEach(w=>{if(m.includes(w)){score-=10;tags.push({t:"⚠️ "+w,c:"#f97316"});}}));
+  if(m.includes("減塩")||m.includes("塩分控え")){score+=5;tags.push({t:"✅ 減塩",c:"#22c55e"});}
+  if(m.includes("食べすぎ")||m.includes("大盛り")){score-=8;tags.push({t:"⚠️ 食べすぎ",c:"#ef4444"});}
+  score=Math.max(0,Math.min(100,score));
+  const grade=score>=80?{label:"優秀",color:"#22c55e"}:score>=60?{label:"良好",color:"#84cc16"}:score>=40?{label:"普通",color:"#eab308"}:{label:"要改善",color:"#ef4444"};
+  return{score,grade,tags};
+}
+
+// ── SVG Line Chart ──
+function SvgChart({data}){
+  if(!data||data.length===0)return h("div",{style:{color:"#475569",fontSize:12,textAlign:"center",padding:20}},"データがありません");
+  // Dynamic width: each data point gets at least 28px, minimum 360
+  const PL=38,PR=10,PT=14,PB=32;
+  const pointW=Math.max(28, Math.floor((360-PL-PR)/(data.length||1)));
+  const W=Math.max(360, PL+PR+pointW*data.length);
+  const H=175;
+  const cw=W-PL-PR, ch=H-PT-PB;
+  const vals=[...data.map(d=>d["収縮期"]).filter(Boolean),...data.map(d=>d["拡張期"]).filter(Boolean),...data.map(d=>d["脈拍"]).filter(Boolean)];
+  const minV=Math.max(0,Math.min(50,...vals)-10);
+  const maxV=Math.min(250,Math.max(170,...vals)+10);
+  const range=maxV-minV||1;
+  const x=i=>PL+i*pointW+pointW/2;
+  const y=v=>PT+ch-(((v-minV)/range)*ch);
+  const buildPath=(key)=>{
+    let d2="",first=true;
+    data.forEach((dp,i)=>{
+      if(dp[key]==null)return;
+      const px=x(i).toFixed(1),py=y(dp[key]).toFixed(1);
+      d2+=first?`M${px} ${py}`:`L${px} ${py}`;
+      first=false;
+    });
+    return d2;
+  };
+  const [tooltip,setTooltip]=useState(null);
+  const gridYs=[60,80,90,100,120,140,160,180];
+  const showLabel=(i)=>{
+    if(data.length<=10) return true;
+    if(data.length<=20) return i%2===0;
+    return i%Math.ceil(data.length/10)===0||i===data.length-1;
+  };
+  return h("div",{style:{position:"relative",overflowX:"auto",overflowY:"visible",WebkitOverflowScrolling:"touch"}},
+    h("svg",{viewBox:`0 0 ${W} ${H}`,width:Math.max(W,360),height:H,
+      style:{display:"block",minWidth:W},
+      onMouseLeave:()=>setTooltip(null),
+      onTouchEnd:()=>setTimeout(()=>setTooltip(null),2500)},
+      // background
+      h("rect",{x:PL,y:PT,width:cw,height:ch,fill:"rgba(255,255,255,.02)",rx:4}),
+      // horizontal grid lines with labels
+      gridYs.filter(v=>v>minV&&v<maxV).map(v=>
+        h(Fragment,{key:v},
+          h("line",{x1:PL,y1:y(v),x2:W-PR,y2:y(v),
+            stroke:v===140?"rgba(239,68,68,.35)":v===90?"rgba(59,130,246,.35)":"rgba(255,255,255,.06)",
+            strokeDasharray:v===140||v===90?"6 3":"3 3",strokeWidth:v===140||v===90?1.5:1}),
+          h("text",{x:PL-3,y:y(v)+3.5,textAnchor:"end",fontSize:9,fill:v===140?"#ef444499":v===90?"#3b82f699":"#475569"},v)
+        )
+      ),
+      // reference line labels
+      h("text",{x:W-PR-2,y:y(140)-3,textAnchor:"end",fontSize:8,fill:"rgba(239,68,68,.6)"},"140"),
+      h("text",{x:W-PR-2,y:y(90)-3,textAnchor:"end",fontSize:8,fill:"rgba(59,130,246,.6)"},"90"),
+      // vertical guides per data point
+      data.map((_,i)=>
+        h("line",{key:"vg"+i,x1:x(i),y1:PT,x2:x(i),y2:PT+ch,
+          stroke:"rgba(255,255,255,.03)",strokeWidth:1})
+      ),
+      // x-axis date labels
+      data.map((d,i)=>showLabel(i)?
+        h(Fragment,{key:"xl"+i},
+          h("line",{x1:x(i),y1:PT+ch,x2:x(i),y2:PT+ch+4,stroke:"rgba(255,255,255,.15)",strokeWidth:1}),
+          h("text",{x:x(i),y:H-2,textAnchor:"middle",fontSize:8.5,fill:"#64748b",fontWeight:"500"},
+            d.date.slice(5).replace("-","/"))
+        ):null
+      ),
+      // area fills (subtle)
+      buildPath("収縮期").length>1&&h("path",{d:buildPath("収縮期")+`L${x(data.length-1)} ${PT+ch} L${x(0)} ${PT+ch} Z`,
+        fill:"rgba(239,68,68,.06)"}),
+      buildPath("拡張期").length>1&&h("path",{d:buildPath("拡張期")+`L${x(data.length-1)} ${PT+ch} L${x(0)} ${PT+ch} Z`,
+        fill:"rgba(59,130,246,.06)"}),
+      // lines
+      buildPath("収縮期").length>1&&h("path",{d:buildPath("収縮期"),stroke:"#ef4444",strokeWidth:"2",fill:"none",strokeLinejoin:"round"}),
+      buildPath("拡張期").length>1&&h("path",{d:buildPath("拡張期"),stroke:"#3b82f6",strokeWidth:"2",fill:"none",strokeLinejoin:"round"}),
+      buildPath("脈拍").length>1&&h("path",{d:buildPath("脈拍"),stroke:"#a855f7",strokeWidth:"1.5",fill:"none",strokeDasharray:"5 3",strokeLinejoin:"round"}),
+      // data point dots
+      data.map((d,i)=>h(Fragment,{key:"dots"+i},
+        d["収縮期"]&&h("circle",{cx:x(i),cy:y(d["収縮期"]),r:3,fill:"#ef4444",stroke:"rgba(8,13,26,.8)",strokeWidth:1.5}),
+        d["拡張期"]&&h("circle",{cx:x(i),cy:y(d["拡張期"]),r:3,fill:"#3b82f6",stroke:"rgba(8,13,26,.8)",strokeWidth:1.5}),
+        d["脈拍"]&&h("circle",{cx:x(i),cy:y(d["脈拍"]),r:2.5,fill:"#a855f7",stroke:"rgba(8,13,26,.8)",strokeWidth:1})
+      )),
+      // invisible touch targets
+      data.map((d,i)=>
+        h("rect",{key:"hit"+i,x:x(i)-pointW/2,y:PT,width:pointW,height:ch,fill:"transparent",
+          style:{cursor:"pointer"},
+          onMouseEnter:()=>setTooltip({i,d,px:x(i)}),
+          onTouchStart:(e)=>{e.preventDefault();setTooltip({i,d,px:x(i)});}
+        })
+      )
+    ),
+    // Tooltip
+    tooltip&&h("div",{style:{
+      position:"absolute",top:0,
+      left:Math.min(Math.max(tooltip.px-50,0), 220),
+      background:"rgba(10,15,30,.97)",border:"1px solid rgba(99,102,241,.4)",
+      borderRadius:9,padding:"9px 13px",fontSize:12,color:"#e2e8f0",
+      pointerEvents:"none",zIndex:20,minWidth:110,boxShadow:"0 4px 20px rgba(0,0,0,.5)"}},
+      h("div",{style:{fontWeight:700,color:"#818cf8",marginBottom:5,fontSize:11}},
+        tooltip.d.date.replace(/-/g,"/")),
+      tooltip.d["収縮期"]&&h("div",{style:{color:"#ef4444",marginBottom:2}},
+        "収縮期: ",h("b",null,tooltip.d["収縮期"])," mmHg"),
+      tooltip.d["拡張期"]&&h("div",{style:{color:"#3b82f6",marginBottom:2}},
+        "拡張期: ",h("b",null,tooltip.d["拡張期"])," mmHg"),
+      tooltip.d["脈拍"]&&h("div",{style:{color:"#a855f7"}},
+        "脈拍: ",h("b",null,tooltip.d["脈拍"])," bpm")
+    )
+  );
+}
+
+// ── Styles ──
+const S={
+  app:{minHeight:"100vh",background:"#080d1a",color:"#e2e8f0",paddingBottom:70},
+  hdr:{background:"linear-gradient(135deg,#0f172a 0%,#1a1040 50%,#0f172a 100%)",borderBottom:"1px solid rgba(99,102,241,.25)",padding:"16px 16px 0",position:"sticky",top:0,zIndex:100},
+  ttl:{fontSize:19,fontWeight:800,background:"linear-gradient(90deg,#818cf8,#38bdf8)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:2},
+  sub:{fontSize:11,color:"#475569",marginBottom:12},
+  sec:{padding:"14px 14px 0"},
+  card:{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,padding:14,marginBottom:12},
+  ct:{fontSize:11,color:"#94a3b8",fontWeight:700,marginBottom:10,letterSpacing:".06em",textTransform:"uppercase"},
+  inp:{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:9,color:"#e2e8f0",padding:"10px 11px",fontSize:15,width:"100%",outline:"none"},
+  sel:{background:"#1e293b",border:"1px solid rgba(255,255,255,.1)",borderRadius:9,color:"#e2e8f0",padding:"10px 11px",fontSize:14,width:"100%",outline:"none"},
+  btn:(v="p",sm)=>({background:v==="p"?"linear-gradient(135deg,#6366f1,#818cf8)":v==="d"?"rgba(239,68,68,.15)":"rgba(255,255,255,.06)",border:v==="d"?"1px solid rgba(239,68,68,.3)":v==="p"?"none":"1px solid rgba(255,255,255,.1)",borderRadius:9,color:v==="d"?"#f87171":"#fff",padding:sm?"7px 11px":"11px 16px",fontSize:sm?12:14,fontWeight:700,cursor:"pointer",width:sm?"auto":"100%"}),
+  badge:c=>({display:"inline-block",background:`${c}20`,border:`1px solid ${c}50`,color:c,borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700}),
+  stat:c=>({flex:1,background:`${c}15`,border:`1px solid ${c}25`,borderRadius:11,padding:"11px 8px",textAlign:"center"}),
+  sv:{fontSize:24,fontWeight:800,lineHeight:1},
+  sl:{fontSize:10,color:"#64748b",marginTop:3},
+  row:{display:"flex",gap:8},
+  pill:(a,c="#6366f1")=>({display:"inline-flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",background:a?`${c}25`:"rgba(255,255,255,.04)",border:`1px solid ${a?c+"50":"rgba(255,255,255,.08)"}`,color:a?c:"#64748b"}),
+  tab:a=>({padding:"9px 12px",fontSize:12,fontWeight:a?700:400,color:a?"#818cf8":"#64748b",borderTop:"none",borderLeft:"none",borderRight:"none",borderBottom:a?"2px solid #818cf8":"2px solid transparent",cursor:"pointer",background:"none",whiteSpace:"nowrap"}),
+};
+
+// ── DatePicker Component ──
+function localToday(){
+  const n=new Date();
+  return n.getFullYear()+"-"+String(n.getMonth()+1).padStart(2,"0")+"-"+String(n.getDate()).padStart(2,"0");
+}
+function addDays(dateStr,n){
+  const [y,m,d]=dateStr.split("-").map(Number);
+  const dt=new Date(y,m-1,d+n);
+  return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");
+}
+function DatePicker({value, onChange, label}){
+  const [open,setOpen]=useState(false);
+  const today=localToday();
+  const [y,m]=value?value.split("-").map(Number):[new Date().getFullYear(),new Date().getMonth()+1];
+  const [viewY,setViewY]=useState(y);
+  const [viewM,setViewM]=useState(m);
+
+  const fmt=d=>{
+    if(!d)return "日付を選択";
+    const [yy,mm,dd]=d.split("-").map(Number);
+    const wdays=["日","月","火","水","木","金","土"];
+    const w=wdays[new Date(yy,mm-1,dd).getDay()];
+    return yy+"年"+mm+"月"+dd+"日（"+w+"）";
+  };
+  const isToday=value===today;
+
+  const prevMonth=()=>{
+    if(viewM===1){setViewY(viewY-1);setViewM(12);}
+    else setViewM(viewM-1);
+  };
+  const nextMonth=()=>{
+    const ny=viewM===12?viewY+1:viewY;
+    const nm=viewM===12?1:viewM+1;
+    const firstOfNext=ny+"-"+String(nm).padStart(2,"0")+"-01";
+    if(firstOfNext<=today){setViewY(ny);setViewM(nm);}
+  };
+
+  const firstDow=new Date(viewY,viewM-1,1).getDay();
+  const daysInMonth=new Date(viewY,viewM,0).getDate();
+  const cells=[];
+  for(let i=0;i<firstDow;i++) cells.push(null);
+  for(let d=1;d<=daysInMonth;d++) cells.push(d);
+
+  const selectDay=d=>{
+    const ds=viewY+"-"+String(viewM).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+    if(ds<=today){onChange(ds);setOpen(false);}
+  };
+
+  const btnS={background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",
+    borderRadius:8,color:"#e2e8f0",width:38,height:44,fontSize:20,cursor:"pointer",
+    flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"};
+
+  return h("div",{style:{display:"flex",flexDirection:"column",gap:8,position:"relative"}},
+    label&&h("div",{style:{fontSize:11,color:"#94a3b8",fontWeight:700,letterSpacing:".06em"}},"📅 ",label),
+    h("div",{style:{display:"flex",alignItems:"center",gap:6}},
+      h("button",{onClick:e=>{e.preventDefault();if(value)onChange(addDays(value,-1));},style:btnS},"‹"),
+      h("div",{
+        onClick:()=>{setViewY(y);setViewM(m);setOpen(!open);},
+        style:{flex:1,height:44,background:"rgba(99,102,241,.12)",border:"1px solid rgba(99,102,241,.4)",
+          borderRadius:9,display:"flex",alignItems:"center",justifyContent:"space-between",
+          padding:"0 14px",cursor:"pointer",userSelect:"none"}},
+        h("span",{style:{fontSize:14,fontWeight:700,color:"#c7d2fe"}},fmt(value)),
+        h("span",{style:{fontSize:15}},"📅")
+      ),
+      h("button",{onClick:e=>{e.preventDefault();if(value&&value<today)onChange(addDays(value,1));},
+        style:{...btnS,opacity:isToday?.3:1,cursor:isToday?"default":"pointer"},disabled:isToday},"›"),
+      h("button",{onClick:e=>{e.preventDefault();onChange(today);setOpen(false);},
+        style:{...btnS,width:"auto",padding:"0 10px",fontSize:12,fontWeight:700,
+          background:isToday?"rgba(99,102,241,.3)":"rgba(255,255,255,.06)",
+          border:"1px solid "+(isToday?"rgba(99,102,241,.7)":"rgba(255,255,255,.1)"),
+          color:isToday?"#818cf8":"#94a3b8"}},"今日")
+    ),
+    open&&h("div",{style:{
+      position:"absolute",top:"calc(100% + 6px)",left:0,
+      width:220,zIndex:200,
+      background:"#1a2236",border:"1px solid rgba(99,102,241,.45)",
+      borderRadius:10,padding:"8px 8px 6px",
+      boxShadow:"0 8px 32px rgba(0,0,0,.7)"}},
+      h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}},
+        h("button",{onClick:prevMonth,
+          style:{background:"none",border:"none",color:"#818cf8",fontSize:14,cursor:"pointer",padding:"2px 6px"}
+        },"‹"),
+        h("span",{style:{fontSize:11,fontWeight:700,color:"#c7d2fe"}},viewY+"年"+viewM+"月"),
+        h("button",{onClick:nextMonth,
+          style:{background:"none",border:"none",color:"#818cf8",fontSize:14,cursor:"pointer",padding:"2px 6px",
+            opacity:(viewY+"-"+String(viewM).padStart(2,"0"))>=(today.slice(0,7))?.25:1}
+        },"›")
+      ),
+      h("div",{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:1,marginBottom:3}},
+        ["日","月","火","水","木","金","土"].map(w=>
+          h("div",{key:w,style:{textAlign:"center",fontSize:8,
+            color:w==="日"?"#f87171":w==="土"?"#60a5fa":"#475569",
+            padding:"1px 0",fontWeight:600}},w)
+        )
+      ),
+      h("div",{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:1}},
+        cells.map((d,i)=>{
+          if(!d) return h("div",{key:"e"+i});
+          const ds=viewY+"-"+String(viewM).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+          const isSel=ds===value;
+          const isTod=ds===today;
+          const isFut=ds>today;
+          const dow=new Date(viewY,viewM-1,d).getDay();
+          return h("div",{key:d,
+            onClick:()=>!isFut&&selectDay(d),
+            style:{textAlign:"center",padding:"3px 0",borderRadius:4,fontSize:10,
+              fontWeight:isSel||isTod?700:400,
+              background:isSel?"#6366f1":isTod?"rgba(99,102,241,.25)":"transparent",
+              color:isFut?"#2d3a50":isSel?"#fff":isTod?"#818cf8":dow===0?"#f87171":dow===6?"#60a5fa":"#cbd5e1",
+              cursor:isFut?"default":"pointer",
+              border:isTod&&!isSel?"1px solid rgba(99,102,241,.5)":"1px solid transparent",
+              lineHeight:"1.6"}},
+            d
+          );
+        })
+      ),
+      h("button",{onClick:()=>setOpen(false),
+        style:{marginTop:5,width:"100%",background:"rgba(255,255,255,.04)",
+          border:"1px solid rgba(255,255,255,.08)",borderRadius:6,
+          color:"#64748b",padding:"4px",fontSize:10,cursor:"pointer"}},"閉じる")
+    )
+  );
+}
+
+// ════════════════════════════════════
+function App(){
+  const [tab,setTab]=useState("dashboard");
+  const [records,setRecords]=useState([]);
+  const [bpForm,setBpForm]=useState({date:"",sys:"",dia:"",pulse:"",note:""});
+  const [csvMsg,setCsvMsg]=useState("");
+  const fileRef=useRef();
+  const [meds,setMeds]=useState([]);
+  const [medForm,setMedForm]=useState({name:"",dose:"",unit:"錠",morning:false,evening:false,timing:"食後",note:""});
+  const [editMedId,setEditMedId]=useState(null);
+  const [dailyLogs,setDailyLogs]=useState({});
+  const [logDate,setLogDate]=useState("");
+  const [aiResult,setAiResult]=useState(null);
+  const [aiLoading,setAiLoading]=useState(false);
+  const [routineLog,setRoutineLog]=useState({});
+  const toggleRoutine=i=>setRoutineLog(r=>({...r,[i]:{...r[i],done:!r[i]?.done}}));
+  const setRoutineDetail=(i,key,val)=>setRoutineLog(r=>({...r,[i]:{...r[i],[key]:val}}));
+  const [morningAdvice,setMorningAdvice]=useState(null);
+  const [morningLoading,setMorningLoading]=useState(false);
+  const [morningDate,setMorningDate]=useState(null);
+  const PDEF={name:"",age:"",gender:"男性",height:"",weight:"",bloodType:"",conditions:"糖尿病、高血圧",allergies:"",doctorName:"",doctorPhone:"",emergency:"",memo:""};
+  const [profile,setProfile]=useState(PDEF);
+  const [profSaved,setProfSaved]=useState(false);
+
+  useEffect(()=>{
+    const now=new Date();
+    const today=[now.getFullYear(),String(now.getMonth()+1).padStart(2,"0"),String(now.getDate()).padStart(2,"0")].join("-");
+    setBpForm(f=>({...f,date:today}));
+    setLogDate(today);
+    try{
+      const r=store.get("hk-records");if(r)setRecords(JSON.parse(r));
+      const m=store.get("hk-meds");if(m)setMeds(JSON.parse(m));
+      const d=store.get("hk-daily");if(d)setDailyLogs(JSON.parse(d));
+      const p=store.get("hk-profile");if(p)setProfile(JSON.parse(p));
+    }catch{}
+  },[]);
+
+  const saveRec=r=>{setRecords(r);store.set("hk-records",JSON.stringify(r));};
+  const saveMeds=m=>{setMeds(m);store.set("hk-meds",JSON.stringify(m));};
+  const saveLogs=d=>{setDailyLogs(d);store.set("hk-daily",JSON.stringify(d));};
+  const saveProf=p=>{setProfile(p);store.set("hk-profile",JSON.stringify(p));setProfSaved(true);setTimeout(()=>setProfSaved(false),2000);};
+
+  const addBP=()=>{
+    if(!bpForm.date||!bpForm.sys||!bpForm.dia)return;
+    const e={id:Date.now(),date:bpForm.date,sys:+bpForm.sys,dia:+bpForm.dia,pulse:bpForm.pulse?+bpForm.pulse:null,note:bpForm.note};
+    saveRec([...records,e].sort((a,b)=>a.date.localeCompare(b.date)));
+    setBpForm(f=>({...f,sys:"",dia:"",pulse:"",note:""}));
+  };
+  const delBP=id=>saveRec(records.filter(r=>r.id!==id));
+  const handleCSV=e=>{
+    const file=e.target.files[0];if(!file)return;setCsvMsg("");
+    const rd=new FileReader();
+    rd.onload=ev=>{
+      try{
+        const p=parseCSV(ev.target.result);
+        if(!p.length){setCsvMsg("❌ データを読み込めません");return;}
+        const merged=[...records];
+        p.forEach(x=>{if(!merged.find(r=>r.date===x.date))merged.push({id:Date.now()+Math.random(),...x,note:"CSV"});});
+        saveRec(merged.sort((a,b)=>a.date.localeCompare(b.date)));
+        setCsvMsg(`✅ ${p.length}件のデータを取り込みました`);
+      }catch{setCsvMsg("❌ ファイルエラー");}
+    };
+    rd.readAsText(file);
+  };
+
+  const saveMed=()=>{
+    if(!medForm.name)return;
+    if(!medForm.morning&&!medForm.evening)return;
+    if(editMedId){saveMeds(meds.map(m=>m.id===editMedId?{...m,...medForm}:m));setEditMedId(null);}
+    else saveMeds([...meds,{id:Date.now(),...medForm}]);
+    setMedForm({name:"",dose:"",unit:"錠",morning:false,evening:false,timing:"食後",note:""});
+  };
+  const delMed=id=>saveMeds(meds.filter(m=>m.id!==id));
+  const editMed=med=>{setMedForm({name:med.name,dose:med.dose,unit:med.unit,morning:med.morning,evening:med.evening,timing:med.timing,note:med.note||""});setEditMedId(med.id);};
+
+  const getLog=date=>dailyLogs[date]||{morningTaken:[],eveningTaken:[],breakfast:"",lunch:"",dinner:"",mealNote:""};
+  const updLog=(date,patch)=>saveLogs({...dailyLogs,[date]:{...getLog(date),...patch}});
+  const toggleMed=(date,medId,slot)=>{
+    const log=getLog(date);
+    const key=slot==="morning"?"morningTaken":"eveningTaken";
+    const arr=log[key]||[];
+    updLog(date,{[key]:arr.includes(medId)?arr.filter(x=>x!==medId):[...arr,medId]});
+  };
+
+  const handleAI=async()=>{
+    setAiLoading(true);setAiResult(null);
+    try{
+      const bpHist=records.slice(-14).map(r=>`${r.date}: ${r.sys}/${r.dia}${r.pulse?`, 脈拍${r.pulse}`:""}`).join("\n");
+      const medList=meds.map(m=>`- ${m.name} ${m.dose}${m.unit} (${[m.morning?"朝":null,m.evening?"夕":null].filter(Boolean).join("・")}, ${m.timing})`).join("\n");
+      const meals=Object.entries(dailyLogs).slice(-7).map(([d,l])=>{
+        const ms=[l.breakfast&&`朝:${l.breakfast}`,l.lunch&&`昼:${l.lunch}`,l.dinner&&`夕:${l.dinner}`].filter(Boolean).join(", ");
+        return ms?`${d}: ${ms}`:null;
+      }).filter(Boolean).join("\n");
+      const tl=getLog(logDate);
+      const mMiss=meds.filter(m=>m.morning&&!(tl.morningTaken||[]).includes(m.id)).map(m=>m.name);
+      const eMiss=meds.filter(m=>m.evening&&!(tl.eveningTaken||[]).includes(m.id)).map(m=>m.name);
+      const bmi=(profile.height&&profile.weight)?(profile.weight/((profile.height/100)**2)).toFixed(1):"未入力";
+      const ideal=profile.height?((profile.height-100)*0.9).toFixed(1):"未入力";
+      const pInfo=`氏名:${profile.name||"未入力"}, 年齢:${profile.age||"未入力"}歳, 性別:${profile.gender}, 身長:${profile.height||"未入力"}cm, 体重:${profile.weight||"未入力"}kg, BMI:${bmi}, 標準体重:${ideal}kg, 血液型:${profile.bloodType||"未入力"}, 既往症:${profile.conditions||"なし"}, アレルギー:${profile.allergies||"なし"}`;
+      const prompt=`あなたは健康管理AIアシスタントです。以下のデータをもとに日本語で総合健康評価をしてください。
+
+【個人情報】
+${pInfo}
+
+【血圧・脈拍記録（直近14日）】
+${bpHist||"データなし"}
+
+【服薬中の薬】
+${medList||"登録なし"}
+
+【直近7日の食事記録】
+${meals||"記録なし"}
+
+【本日の未服薬】
+朝: ${mMiss.length?mMiss.join(", "):"すべて服薬済み"}
+夕: ${eMiss.length?eMiss.join(", "):"すべて服薬済みまたは対象外"}
+
+以下の項目で評価してください（個人プロフィールを必ず反映）：
+1. 血圧トレンド分析（年齢・性別基準との比較、改善/悪化/維持）
+2. BMI・体重評価（糖尿病・高血圧の観点から）
+3. 食生活評価（既往症を考慮、良い点と改善点）
+4. 服薬遵守度の評価
+5. 本日の推奨アクション3つ（個人状況に合わせて）
+6. 受診が必要かどうか`;
+      const res=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1200,messages:[{role:"user",content:prompt}]})
+      });
+      const data=await res.json();
+      setAiResult(data.content?.find(b=>b.type==="text")?.text||"応答なし");
+    }catch{setAiResult("AI評価中にエラーが発生しました。");}
+    setAiLoading(false);
+  };
+
+  const handleMorningAdvice=async()=>{
+    setMorningLoading(true);setMorningAdvice(null);
+    try{
+      const _nn=new Date();const today=logDate||[_nn.getFullYear(),String(_nn.getMonth()+1).padStart(2,"0"),String(_nn.getDate()).padStart(2,"0")].join("-");
+      const tl=getLog(today);
+      const lat=records[records.length-1];
+      const prev=records[records.length-2];
+      const bpToday=lat?`収縮期${lat.sys}/拡張期${lat.dia}${lat.pulse?`, 脈拍${lat.pulse}`:""}`:null;
+      const bpYest=prev?`収縮期${prev.sys}/拡張期${prev.dia}${prev.pulse?`, 脈拍${prev.pulse}`:""}`:null;
+      const bpTrend=bpToday&&bpYest?"最新: "+bpToday+"  前回: "+bpYest:bpToday?"最新: "+bpToday:"血圧データなし";
+      const evT=lat?evalBP(lat.sys,lat.dia,lat.pulse):null;
+      const mornMeds2=meds.filter(m=>m.morning);
+      const mornDone2=mornMeds2.length>0&&mornMeds2.every(m=>(tl.morningTaken||[]).includes(m.id));
+      const bmi=(profile.height&&profile.weight)?(profile.weight/((profile.height/100)**2)).toFixed(1):"未入力";
+      const weekBP=records.slice(-7);
+      const avgS=weekBP.length?Math.round(weekBP.reduce((s,r)=>s+r.sys,0)/weekBP.length):null;
+      const avgD=weekBP.length?Math.round(weekBP.reduce((s,r)=>s+r.dia,0)/weekBP.length):null;
+      const meals7=Object.entries(dailyLogs).slice(-7).map(([,l])=>[l.breakfast,l.lunch,l.dinner].filter(Boolean).join("、")).filter(Boolean).join(" / ");
+      const walkIdx=6; const wr=routineLog[walkIdx]||{};
+      const walkInfo=wr.done?(wr.walkMin?"散歩 "+wr.walkMin+"分"+(wr.walkKm?" "+wr.walkKm+"km":"")+(wr.walkSteps?" "+wr.walkSteps+"歩":""):"散歩 完了"):"散歩 未実施";
+      const prompt=`あなたは親切な健康管理AIコーチです。以下のデータをもとに、今朝の体調バランスチェックと一日のアドバイスを日本語で提供してください。
+
+【本人情報】
+氏名: ${profile.name||"未設定"}, 年齢: ${profile.age||"未設定"}歳, 性別: ${profile.gender}
+身長: ${profile.height||"未設定"}cm, 体重: ${profile.weight||"未設定"}kg, BMI: ${bmi}
+既往症: ${profile.conditions||"なし"}
+
+【今日の血圧・脈拍】
+${bpTrend}
+血圧判定: ${evT?evT.status:"データなし"}
+7日間平均: ${avgS?"収縮期 "+avgS+" / 拡張期 "+avgD:"データなし"}
+
+【今日の運動】
+${walkInfo}
+
+【朝の服薬】
+${mornDone2?"✅ 服薬済み":"⚠️ まだ服薬していません"}
+
+【直近7日の食事傾向】
+${meals7||"記録なし"}
+
+【今日の日付・曜日】
+${today} (${new Date(today).toLocaleDateString("ja-JP",{weekday:"long"})})
+
+以下の形式で、やさしく具体的にアドバイスしてください:
+
+🩺 今朝の体調バランス評価
+（血圧・脈拍・前日比・週間傾向を踏まえた評価）
+
+💪 今日の身体活動アドバイス
+（血圧状態に合わせた運動強度・散歩の目安など）
+
+🍽️ 今日の食事アドバイス
+（既往症と最近の食事傾向を踏まえた具体的な提案）
+
+😌 今日のメンタル・生活アドバイス
+（退職後の充実した生活のための一言）
+
+⚠️ 今日の注意点
+（今日特に気をつけること）`;
+      const res=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content:prompt}]})
+      });
+      const data=await res.json();
+      setMorningAdvice(data.content?.find(b=>b.type==="text")?.text||"応答なし");
+      setMorningDate(today);
+    }catch(e){setMorningAdvice("アドバイスの取得中にエラーが発生しました。");}
+    setMorningLoading(false);
+  };
+
+  const latest=records[records.length-1];
+  const ev=latest?evalBP(latest.sys,latest.dia,latest.pulse):null;
+  const chartData=records.slice(-30).map(r=>({date:r.date,収縮期:r.sys,拡張期:r.dia,脈拍:r.pulse}));
+  const avgSys=records.length?Math.round(records.slice(-7).reduce((s,r)=>s+r.sys,0)/Math.min(7,records.length)):"--";
+  const avgDia=records.length?Math.round(records.slice(-7).reduce((s,r)=>s+r.dia,0)/Math.min(7,records.length)):"--";
+  const todayStr=new Date().toLocaleDateString("ja-JP",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  const curLog=getLog(logDate);
+  const mornMeds=meds.filter(m=>m.morning);
+  const eveMeds=meds.filter(m=>m.evening);
+  const mornDone=mornMeds.length>0&&mornMeds.every(m=>(curLog.morningTaken||[]).includes(m.id));
+  const eveDone=eveMeds.length>0&&eveMeds.every(m=>(curLog.eveningTaken||[]).includes(m.id));
+  const bfScore=scoreMeal(curLog.breakfast);
+  const checkedCt=Object.values(routineLog).filter(v=>v?.done).length;
+
+  const ROUTINE=[
+    {key:"rise", time:"06:30",icon:"🌅",title:"起床・水を一杯",desc:"常温の水を200ml",dur:5},
+    {key:"bp",   time:"06:35",icon:"🩺",title:"血圧・脈拍測定",desc:"安静状態で測定後に記録",dur:10},
+    {key:"med",  time:"06:45",icon:"💊",title:"朝の服薬",desc:mornMeds.length?mornMeds.map(m=>m.name+" "+m.dose+m.unit).join(" · "):"薬を先に登録してください",dur:5},
+    {key:"stretch",time:"06:50",icon:"🧘",title:"ストレッチ",desc:"関節ほぐし・軽い体操",dur:10},
+    {key:"meal", time:"07:00",icon:"🍱",title:"朝食",desc:"減塩・低糖質、野菜たっぷり",dur:30},
+    {key:"walk", time:"07:30",icon:"🚶",title:"朝の散歩",desc:"時間・距離・歩数を記録",dur:30},
+    {key:"read", time:"08:00",icon:"📰",title:"ニュース・読書",desc:"ITトレンドや趣味の時間",dur:30},
+    {key:"proj", time:"08:30",icon:"🖥️",title:"自由時間・プロジェクト",desc:"個人プロジェクト・学習・趣味",dur:90},
+  ];
+
+  // ── TABS ──
+  const TABS=[["dashboard","📊 ダッシュボード"],["log","📝 今日の記録"],["meds","💊 服薬管理"],["input","🩺 血圧入力"],["routine","☀️ ルーティン"],["history","📋 記録一覧"],["profile","👤 プロフィール"]];
+
+  return h("div",{style:S.app},
+    // ── Header ──
+    h("div",{style:S.hdr},
+      h("div",{style:S.ttl},"🏥 健康管理ダッシュボード"),
+      h("div",{style:S.sub},(profile.name?profile.name+" さん · ":"")+todayStr),
+      h("div",{className:"tab-scroll"},
+        TABS.map(([id,lbl])=>h("button",{key:id,style:S.tab(tab===id),onClick:()=>setTab(id)},lbl))
+      )
+    ),
+
+    // ══ DASHBOARD ══
+    tab==="dashboard"&&h("div",{style:S.sec},
+      latest?h(Fragment,null,
+        // BP card
+        h("div",{style:{...S.card,borderColor:`${ev.color}30`}},
+          h("div",{style:S.ct},"最新の血圧"),
+          h("div",{style:{...S.row,marginBottom:10}},
+            h("div",{style:S.stat("#ef4444")},h("div",{style:{...S.sv,color:"#ef4444"}},latest.sys),h("div",{style:S.sl},"収縮期 mmHg")),
+            h("div",{style:S.stat("#3b82f6")},h("div",{style:{...S.sv,color:"#3b82f6"}},latest.dia),h("div",{style:S.sl},"拡張期 mmHg")),
+            latest.pulse&&h("div",{style:S.stat("#a855f7")},h("div",{style:{...S.sv,color:"#a855f7"}},latest.pulse),h("div",{style:S.sl},"脈拍 bpm"))
+          ),
+          h("span",{style:S.badge(ev.color)},ev.status),
+          h("span",{style:{fontSize:11,color:"#475569",marginLeft:8}},latest.date),
+          h("div",{style:{marginTop:8}},ev.advice.map((a,i)=>h("div",{key:i,style:{fontSize:12,color:"#94a3b8",padding:"2px 0"}},"• ",a)))
+        ),
+        // 7day avg
+        h("div",{style:S.card},
+          h("div",{style:S.ct},"直近7日間の平均"),
+          h("div",{style:S.row},
+            h("div",{style:S.stat("#ef4444")},h("div",{style:{...S.sv,fontSize:20,color:"#ef4444"}},avgSys),h("div",{style:S.sl},"平均収縮期")),
+            h("div",{style:S.stat("#3b82f6")},h("div",{style:{...S.sv,fontSize:20,color:"#3b82f6"}},avgDia),h("div",{style:S.sl},"平均拡張期"))
+          )
+        ),
+        // profile summary
+        (profile.name||profile.height||profile.weight)&&h("div",{style:{...S.card,background:"rgba(56,189,248,.04)",borderColor:"rgba(56,189,248,.15)"}},
+          h("div",{style:S.ct},"👤 プロフィール"),
+          h("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
+            profile.name&&h("span",{style:S.pill(true,"#38bdf8")},profile.name),
+            profile.age&&h("span",{style:S.pill(true,"#38bdf8")},profile.age+"歳"),
+            profile.gender&&h("span",{style:S.pill(true,"#38bdf8")},profile.gender),
+            (profile.height&&profile.weight)&&(()=>{
+              const bmi=(profile.weight/((profile.height/100)**2)).toFixed(1);
+              const bc=bmi<18.5?"#6366f1":bmi<23?"#22c55e":bmi<25?"#84cc16":bmi<30?"#f97316":"#ef4444";
+              const bl=bmi<18.5?"低体重":bmi<23?"正常":bmi<25?"過体重":bmi<30?"肥満1度":"肥満2度";
+              return h(Fragment,null,
+                h("span",{style:S.pill(true,"#94a3b8")},`${profile.height}cm / ${profile.weight}kg`),
+                h("span",{style:S.pill(true,bc)},`BMI ${bmi} · ${bl}`)
+              );
+            })(),
+            profile.conditions&&h("span",{style:S.pill(true,"#f97316")},profile.conditions)
+          )
+        ),
+        // today status
+        h("div",{style:S.card},
+          h("div",{style:S.ct},"今日の状況"),
+          h("div",{style:{display:"flex",flexWrap:"wrap",gap:8}},
+            h("span",{style:S.pill(mornDone,"#22c55e")},"💊 朝の薬 "+(mornDone?"✓ 完了":"未完了")),
+            h("span",{style:S.pill(eveDone,"#22c55e")},"💊 夕の薬 "+(eveDone?"✓ 完了":"未完了")),
+            h("span",{style:S.pill(!!curLog.breakfast,"#38bdf8")},"🍱 朝食 "+(curLog.breakfast?"記録済み":"未記録"))
+          ),
+          bfScore&&h("div",{style:{marginTop:10,padding:"8px 10px",background:"rgba(255,255,255,.03)",borderRadius:9}},
+            h("div",{style:{fontSize:11,color:"#64748b",marginBottom:5}},"今日の朝食評価"),
+            h("div",{style:{display:"flex",alignItems:"center",gap:10}},
+              h("span",{style:S.badge(bfScore.grade.color)},bfScore.grade.label),
+              h("div",{style:{flex:1,height:6,background:"rgba(255,255,255,.08)",borderRadius:3,overflow:"hidden"}},
+                h("div",{style:{width:`${bfScore.score}%`,height:"100%",background:`linear-gradient(90deg,${bfScore.grade.color},${bfScore.grade.color}88)`,borderRadius:3}})
+              ),
+              h("span",{style:{fontSize:12,color:"#94a3b8",fontWeight:700}},bfScore.score)
+            ),
+            h("div",{style:{marginTop:6,display:"flex",flexWrap:"wrap",gap:4}},
+              bfScore.tags.map((t,i)=>h("span",{key:i,style:{fontSize:11,color:t.c,background:`${t.c}15`,borderRadius:10,padding:"2px 7px"}},t.t))
+            )
+          )
+        ),
+        // chart
+        h("div",{style:S.card},
+          h("div",{style:S.ct},"血圧推移（直近30日）"),
+          h(SvgChart,{data:chartData}),
+          h("div",{style:{display:"flex",gap:14,justifyContent:"center",marginTop:8}},
+            [["#ef4444","収縮期"],["#3b82f6","拡張期"],["#a855f7","脈拍"]].map(([c,l])=>
+              h("div",{key:l,style:{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#64748b"}},
+                h("div",{style:{width:10,height:3,background:c,borderRadius:2}}),l
+              )
+            )
+          )
+        ),
+        // AI
+        h("div",{style:S.card},
+          h("div",{style:S.ct},"🤖 AI総合健康評価"),
+          aiResult?h("div",{style:{fontSize:13,color:"#cbd5e1",lineHeight:1.75,whiteSpace:"pre-wrap",marginBottom:12}},aiResult)
+                  :h("div",{style:{fontSize:12,color:"#475569",marginBottom:12}},"血圧・服薬・食事データをもとにAIが総合評価します"),
+          h("button",{style:S.btn(),onClick:handleAI,disabled:aiLoading},aiLoading?"⏳ 分析中...":"🤖 AI総合評価を受ける")
+        )
+      ):h("div",{style:{...S.card,textAlign:"center",padding:40}},
+        h("div",{style:{fontSize:40,marginBottom:12}},"🩺"),
+        h("div",{style:{color:"#64748b",fontSize:13}},"データがありません",h("br"),"「血圧入力」タブから最初のデータを入力してください")
+      )
+    ),
+
+    // ══ TODAY LOG ══
+    tab==="log"&&h("div",{style:S.sec},
+      h("div",{style:S.card},
+        h(DatePicker,{value:logDate,onChange:setLogDate,label:"記録する日付"})
+      ),
+      // morning meds
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"💊 朝の服薬チェック"),
+        mornMeds.length===0
+          ?h("div",{style:{fontSize:12,color:"#475569"}},"「服薬管理」タブで薬を登録してください")
+          :mornMeds.map(m=>{
+            const taken=(curLog.morningTaken||[]).includes(m.id);
+            return h("div",{key:m.id,onClick:()=>toggleMed(logDate,m.id,"morning"),
+              style:{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",marginBottom:6,
+                background:taken?"rgba(34,197,94,.08)":"rgba(255,255,255,.03)",
+                border:`1px solid ${taken?"rgba(34,197,94,.25)":"rgba(255,255,255,.06)"}`,
+                borderRadius:11,cursor:"pointer"}},
+              h("div",{style:{width:22,height:22,borderRadius:"50%",background:taken?"#22c55e":"rgba(255,255,255,.1)",
+                border:`2px solid ${taken?"#22c55e":"rgba(255,255,255,.15)"}`,
+                display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#fff",flexShrink:0}},
+                taken?"✓":""),
+              h("div",{style:{flex:1}},
+                h("div",{style:{fontSize:14,fontWeight:700,color:taken?"#22c55e":"#e2e8f0"}},m.name),
+                h("div",{style:{fontSize:11,color:"#64748b"}},`${m.dose}${m.unit} · ${m.timing}`)
+              )
+            );
+          })
+      ),
+      // breakfast
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"🍳 朝食"),
+        h("input",{style:S.inp,placeholder:"例：玄米、みそ汁、豆腐の煮物、ほうれん草のおひたし",
+          value:curLog.breakfast||"",onChange:e=>updLog(logDate,{breakfast:e.target.value})}),
+        bfScore&&h("div",{style:{marginTop:10,padding:"10px 12px",background:"rgba(255,255,255,.03)",borderRadius:10}},
+          h("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:8}},
+            h("span",{style:S.badge(bfScore.grade.color)},bfScore.grade.label),
+            h("span",{style:{fontSize:12,color:"#94a3b8"}},`健康スコア ${bfScore.score}点`)
+          ),
+          h("div",{style:{display:"flex",flexWrap:"wrap",gap:4}},
+            bfScore.tags.map((t,i)=>h("span",{key:i,style:{fontSize:11,color:t.c,background:`${t.c}15`,borderRadius:10,padding:"2px 7px"}},t.t))
+          ),
+          bfScore.score<60&&h("div",{style:{marginTop:8,fontSize:12,color:"#f97316"}},"💡 糖尿病・高血圧食：雑穀米、野菜おかず、減塩を心がけましょう")
+        )
+      ),
+      // lunch
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"🥗 昼食"),
+        h("input",{style:S.inp,placeholder:"例：雑穀ご飯、サバの塩焼き、ほうれん草のごまあえ",
+          value:curLog.lunch||"",onChange:e=>updLog(logDate,{lunch:e.target.value})}),
+        curLog.lunch&&(()=>{const s=scoreMeal(curLog.lunch);return s?
+          h("div",{style:{marginTop:8,display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}},
+            h("span",{style:S.badge(s.grade.color)},s.grade.label),
+            s.tags.map((t,i)=>h("span",{key:i,style:{fontSize:11,color:t.c,background:`${t.c}15`,borderRadius:10,padding:"2px 7px"}},t.t))
+          ):null;})()
+      ),
+      // dinner
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"🍜 夕食"),
+        h("input",{style:S.inp,placeholder:"例：絹ごし豆腐、野菜炒め、わかめのみそ汁",
+          value:curLog.dinner||"",onChange:e=>updLog(logDate,{dinner:e.target.value})}),
+        curLog.dinner&&(()=>{const s=scoreMeal(curLog.dinner);return s?
+          h("div",{style:{marginTop:8,display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}},
+            h("span",{style:S.badge(s.grade.color)},s.grade.label),
+            s.tags.map((t,i)=>h("span",{key:i,style:{fontSize:11,color:t.c,background:`${t.c}15`,borderRadius:10,padding:"2px 7px"}},t.t))
+          ):null;})()
+      ),
+      // evening meds
+      eveMeds.length>0&&h("div",{style:S.card},
+        h("div",{style:S.ct},"💊 夕の服薬チェック"),
+        eveMeds.map(m=>{
+          const taken=(curLog.eveningTaken||[]).includes(m.id);
+          return h("div",{key:m.id,onClick:()=>toggleMed(logDate,m.id,"evening"),
+            style:{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",marginBottom:6,
+              background:taken?"rgba(34,197,94,.08)":"rgba(255,255,255,.03)",
+              border:`1px solid ${taken?"rgba(34,197,94,.25)":"rgba(255,255,255,.06)"}`,
+              borderRadius:11,cursor:"pointer"}},
+            h("div",{style:{width:22,height:22,borderRadius:"50%",background:taken?"#22c55e":"rgba(255,255,255,.1)",
+              border:`2px solid ${taken?"#22c55e":"rgba(255,255,255,.15)"}`,
+              display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#fff",flexShrink:0}},
+              taken?"✓":""),
+            h("div",{style:{flex:1}},
+              h("div",{style:{fontSize:14,fontWeight:700,color:taken?"#22c55e":"#e2e8f0"}},m.name),
+              h("div",{style:{fontSize:11,color:"#64748b"}},`${m.dose}${m.unit} · ${m.timing}`)
+            )
+          );
+        })
+      ),
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"📝 食事メモ"),
+        h("textarea",{style:{...S.inp,minHeight:70,resize:"vertical"},
+          placeholder:"外食・食べすぎなどの特記事項...",
+          value:curLog.mealNote||"",onChange:e=>updLog(logDate,{mealNote:e.target.value})})
+      )
+    ),
+
+    // ══ MEDS ══
+    tab==="meds"&&h("div",{style:S.sec},
+      h("div",{style:{...S.card,borderColor:editMedId?"rgba(99,102,241,.4)":"rgba(255,255,255,.08)"}},
+        h("div",{style:S.ct},editMedId?"✏️ 薬を編集":"➕ 薬を登録"),
+        h("div",{style:{display:"flex",flexDirection:"column",gap:9}},
+          h("input",{style:S.inp,placeholder:"薬の名前（例：アムロジピン、メトホルミン）",value:medForm.name,onChange:e=>setMedForm(f=>({...f,name:e.target.value}))}),
+          h("div",{style:S.row},
+            h("input",{type:"number",style:S.inp,placeholder:"用量（例：5）",value:medForm.dose,onChange:e=>setMedForm(f=>({...f,dose:e.target.value}))}),
+            h("select",{style:{...S.sel,flex:"0 0 80px"},value:medForm.unit,onChange:e=>setMedForm(f=>({...f,unit:e.target.value}))},
+              ["錠","カプセル","mg","ml","包"].map(u=>h("option",{key:u,value:u},u))
+            )
+          ),
+          h("select",{style:S.sel,value:medForm.timing,onChange:e=>setMedForm(f=>({...f,timing:e.target.value}))},
+            ["食後","食前","食中","就寝前","タイミング不問"].map(t=>h("option",{key:t,value:t},t))
+          ),
+          h("div",{style:S.row},
+            ...[["morning","🌅 朝","#f97316"],["evening","🌙 夕","#6366f1"]].map(([key,lbl,color])=>{
+              const active=medForm[key];
+              return h("div",{key,onClick:()=>setMedForm(f=>({...f,[key]:!f[key]})),
+                style:{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"14px 10px",borderRadius:12,cursor:"pointer",userSelect:"none",
+                  background:active?`${color}22`:"rgba(255,255,255,.04)",
+                  border:`2px solid ${active?color:"rgba(255,255,255,.1)"}`,transition:"all .2s"}},
+                h("div",{style:{width:20,height:20,borderRadius:5,border:`2px solid ${active?color:"rgba(255,255,255,.2)"}`,
+                  background:active?color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",
+                  fontSize:12,color:"#fff",flexShrink:0,transition:"all .2s"}},active?"✓":""),
+                h("span",{style:{fontSize:14,fontWeight:700,color:active?color:"#94a3b8"}},lbl)
+              );
+            })
+          ),
+          (!medForm.morning&&!medForm.evening)&&h("div",{style:{fontSize:11,color:"#ef4444"}},"⚠️ 朝または夕を選択してください"),
+          h("input",{style:S.inp,placeholder:"メモ（例：降圧薬、糖尿病薬）",value:medForm.note,onChange:e=>setMedForm(f=>({...f,note:e.target.value}))}),
+          h("div",{style:S.row},
+            h("button",{style:S.btn(),onClick:saveMed},editMedId?"編集を保存":"登録"),
+            editMedId&&h("button",{style:{...S.btn("s"),width:"auto",padding:"11px 16px"},onClick:()=>{setEditMedId(null);setMedForm({name:"",dose:"",unit:"錠",morning:false,evening:false,timing:"食後",note:""});}},"キャンセル")
+          )
+        )
+      ),
+      meds.length===0
+        ?h("div",{style:{...S.card,textAlign:"center",padding:30,color:"#475569",fontSize:13}},"登録された薬はありません")
+        :meds.map(m=>h("div",{key:m.id,style:S.card},
+            h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}},
+              h("div",null,
+                h("div",{style:{fontSize:16,fontWeight:800,color:"#e2e8f0",marginBottom:4}},m.name),
+                h("div",{style:{fontSize:12,color:"#94a3b8",marginBottom:6}},`${m.dose}${m.unit} · ${m.timing}`),
+                h("div",{style:{display:"flex",gap:6,flexWrap:"wrap"}},
+                  m.morning&&h("span",{style:S.pill(true,"#f97316")},"🌅 朝"),
+                  m.evening&&h("span",{style:S.pill(true,"#6366f1")},"🌙 夕"),
+                  m.note&&h("span",{style:{fontSize:11,color:"#64748b"}},m.note)
+                )
+              ),
+              h("div",{style:{display:"flex",gap:6}},
+                h("button",{style:S.btn("s",true),onClick:()=>editMed(m)},"編集"),
+                h("button",{style:S.btn("d",true),onClick:()=>delMed(m.id)},"削除")
+              )
+            )
+          )),
+      meds.length>0&&h("div",{style:S.card},
+        h("div",{style:S.ct},"今週の服薬率"),
+        (()=>{
+          const days=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-i);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}).reverse();
+          return meds.map(m=>{
+            const taken=days.filter(d=>{const l=getLog(d);return(m.morning&&(l.morningTaken||[]).includes(m.id))||(m.evening&&(l.eveningTaken||[]).includes(m.id));}).length;
+            const pct=Math.round(taken/days.length*100);
+            return h("div",{key:m.id,style:{marginBottom:10}},
+              h("div",{style:{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}},
+                h("span",{style:{color:"#e2e8f0",fontWeight:600}},m.name),
+                h("span",{style:{color:pct>=80?"#22c55e":pct>=50?"#eab308":"#ef4444",fontWeight:700}},pct+"%")
+              ),
+              h("div",{style:{height:6,background:"rgba(255,255,255,.08)",borderRadius:3,overflow:"hidden"}},
+                h("div",{style:{width:`${pct}%`,height:"100%",background:pct>=80?"#22c55e":pct>=50?"#eab308":"#ef4444",borderRadius:3,transition:"width .5s"}})
+              )
+            );
+          });
+        })()
+      )
+    ),
+
+    // ══ BP INPUT ══
+    tab==="input"&&h("div",{style:S.sec},
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"血圧・脈拍を記録"),
+        h("div",{style:{display:"flex",flexDirection:"column",gap:9}},
+          h(DatePicker,{value:bpForm.date,onChange:d=>setBpForm(f=>({...f,date:d})),label:"測定日"}),
+          h("div",{style:S.row},
+            h("input",{type:"number",style:S.inp,placeholder:"収縮期（上）",value:bpForm.sys,onChange:e=>setBpForm(f=>({...f,sys:e.target.value}))}),
+            h("input",{type:"number",style:S.inp,placeholder:"拡張期（下）",value:bpForm.dia,onChange:e=>setBpForm(f=>({...f,dia:e.target.value}))})
+          ),
+          h("input",{type:"number",style:S.inp,placeholder:"脈拍（任意）",value:bpForm.pulse,onChange:e=>setBpForm(f=>({...f,pulse:e.target.value}))}),
+          h("input",{style:S.inp,placeholder:"メモ（任意）",value:bpForm.note,onChange:e=>setBpForm(f=>({...f,note:e.target.value}))}),
+          h("button",{style:S.btn(),onClick:addBP},"＋ 記録を追加")
+        )
+      ),
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"📁 CSVファイルの取り込み"),
+        h("div",{style:{fontSize:12,color:"#64748b",marginBottom:10,lineHeight:1.7}},
+          "Apple Health からエクスポート後",h("br"),
+          h("span",{style:{color:"#818cf8"}},"日付, 収縮期, 拡張期, 脈拍")," 形式のCSVをアップロード"
+        ),
+        h("input",{ref:fileRef,type:"file",accept:".csv,.txt",style:{display:"none"},onChange:handleCSV}),
+        h("button",{style:S.btn("s"),onClick:()=>fileRef.current?.click()},"📂 CSVファイルを選択"),
+        csvMsg&&h("div",{style:{marginTop:8,fontSize:12,color:csvMsg.startsWith("✅")?"#22c55e":"#ef4444"}},csvMsg)
+      ),
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"📌 CSV形式の例"),
+        h("div",{style:{background:"rgba(0,0,0,.3)",borderRadius:8,padding:"10px 12px",fontFamily:"monospace",fontSize:12,color:"#94a3b8",lineHeight:1.8}},
+          "2026-06-01,128,82,68",h("br"),"2026-06-02,132,85,72",h("br"),"2026-06-03,125,80,70"
+        )
+      )
+    ),
+
+    // ══ ROUTINE ══
+    tab==="routine"&&h("div",{style:S.sec},
+      h("div",{style:{...S.card,background:"rgba(99,102,241,.08)",borderColor:"rgba(99,102,241,.2)"}},
+        h("div",{style:{fontSize:12,color:"#818cf8",fontWeight:700,marginBottom:6}},"今日のルーティン進捗"),
+        h("div",{style:{display:"flex",alignItems:"center",gap:10}},
+          h("div",{style:{fontSize:26,fontWeight:800,background:"linear-gradient(90deg,#818cf8,#38bdf8)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}},`${checkedCt}/${ROUTINE.length}`),
+          h("div",{style:{flex:1,height:7,background:"rgba(255,255,255,.08)",borderRadius:4,overflow:"hidden"}},
+            h("div",{style:{width:`${checkedCt/ROUTINE.length*100}%`,height:"100%",background:"linear-gradient(90deg,#6366f1,#38bdf8)",borderRadius:4,transition:"width .4s"}})
+          )
+        )
+      ),
+      ROUTINE.map((item,i)=>{
+        const rlog=routineLog[i]||{};
+        const done=rlog.done||false;
+        // detail fields per item type
+        const details=[];
+        if(item.key==="walk"){
+          details.push(
+            h("div",{key:"wd",style:{display:"flex",gap:6,marginTop:8},onClick:e=>e.stopPropagation()},
+              h("div",{style:{flex:1}},
+                h("div",{style:{fontSize:10,color:"#64748b",marginBottom:3}},"⏱ 時間（分）"),
+                h("input",{type:"number",placeholder:"30",value:rlog.walkMin||"",
+                  onChange:e=>setRoutineDetail(i,"walkMin",e.target.value),
+                  style:{...S.inp,fontSize:13,padding:"6px 8px",borderRadius:7}})
+              ),
+              h("div",{style:{flex:1}},
+                h("div",{style:{fontSize:10,color:"#64748b",marginBottom:3}},"📍 距離（km）"),
+                h("input",{type:"number",step:"0.1",placeholder:"2.0",value:rlog.walkKm||"",
+                  onChange:e=>setRoutineDetail(i,"walkKm",e.target.value),
+                  style:{...S.inp,fontSize:13,padding:"6px 8px",borderRadius:7}})
+              ),
+              h("div",{style:{flex:1}},
+                h("div",{style:{fontSize:10,color:"#64748b",marginBottom:3}},"👟 歩数"),
+                h("input",{type:"number",placeholder:"3000",value:rlog.walkSteps||"",
+                  onChange:e=>setRoutineDetail(i,"walkSteps",e.target.value),
+                  style:{...S.inp,fontSize:13,padding:"6px 8px",borderRadius:7}})
+              )
+            )
+          );
+        }
+        if(item.key==="stretch"){
+          details.push(
+            h("div",{key:"sd",style:{display:"flex",gap:6,marginTop:8},onClick:e=>e.stopPropagation()},
+              h("div",{style:{flex:1}},
+                h("div",{style:{fontSize:10,color:"#64748b",marginBottom:3}},"⏱ 時間（分）"),
+                h("input",{type:"number",placeholder:"10",value:rlog.stretchMin||"",
+                  onChange:e=>setRoutineDetail(i,"stretchMin",e.target.value),
+                  style:{...S.inp,fontSize:13,padding:"6px 8px",borderRadius:7}})
+              ),
+              h("div",{style:{flex:2}},
+                h("div",{style:{fontSize:10,color:"#64748b",marginBottom:3}},"📝 メモ（部位など）"),
+                h("input",{placeholder:"肩・腰・足首など",value:rlog.stretchNote||"",
+                  onChange:e=>setRoutineDetail(i,"stretchNote",e.target.value),
+                  style:{...S.inp,fontSize:13,padding:"6px 8px",borderRadius:7}})
+              )
+            )
+          );
+        }
+        if(item.key==="read"){
+          details.push(
+            h("div",{key:"rd",style:{display:"flex",gap:6,marginTop:8},onClick:e=>e.stopPropagation()},
+              h("div",{style:{flex:1}},
+                h("div",{style:{fontSize:10,color:"#64748b",marginBottom:3}},"⏱ 時間（分）"),
+                h("input",{type:"number",placeholder:"30",value:rlog.readMin||"",
+                  onChange:e=>setRoutineDetail(i,"readMin",e.target.value),
+                  style:{...S.inp,fontSize:13,padding:"6px 8px",borderRadius:7}})
+              ),
+              h("div",{style:{flex:2}},
+                h("div",{style:{fontSize:10,color:"#64748b",marginBottom:3}},"📖 内容"),
+                h("input",{placeholder:"読んだ本・記事など",value:rlog.readNote||"",
+                  onChange:e=>setRoutineDetail(i,"readNote",e.target.value),
+                  style:{...S.inp,fontSize:13,padding:"6px 8px",borderRadius:7}})
+              )
+            )
+          );
+        }
+        if(item.key==="proj"){
+          details.push(
+            h("div",{key:"pd",style:{display:"flex",gap:6,marginTop:8},onClick:e=>e.stopPropagation()},
+              h("div",{style:{flex:1}},
+                h("div",{style:{fontSize:10,color:"#64748b",marginBottom:3}},"⏱ 時間（分）"),
+                h("input",{type:"number",placeholder:"90",value:rlog.projMin||"",
+                  onChange:e=>setRoutineDetail(i,"projMin",e.target.value),
+                  style:{...S.inp,fontSize:13,padding:"6px 8px",borderRadius:7}})
+              ),
+              h("div",{style:{flex:2}},
+                h("div",{style:{fontSize:10,color:"#64748b",marginBottom:3}},"💡 取り組んだこと"),
+                h("input",{placeholder:"プロジェクト名・学習内容など",value:rlog.projNote||"",
+                  onChange:e=>setRoutineDetail(i,"projNote",e.target.value),
+                  style:{...S.inp,fontSize:13,padding:"6px 8px",borderRadius:7}})
+              )
+            )
+          );
+        }
+        return h("div",{key:i,style:{padding:"12px 14px",
+            background:done?"rgba(34,197,94,.07)":"rgba(255,255,255,.03)",
+            border:`1px solid ${done?"rgba(34,197,94,.2)":"rgba(255,255,255,.06)"}`,
+            borderRadius:12,marginBottom:8}},
+          h("div",{style:{display:"flex",alignItems:"flex-start",gap:12,cursor:"pointer"},
+            onClick:()=>toggleRoutine(i)},
+            h("div",{style:{fontSize:26,lineHeight:1,marginTop:2}},item.icon),
+            h("div",{style:{flex:1}},
+              h("div",{style:{display:"flex",justifyContent:"space-between"}},
+                h("span",{style:{fontSize:14,fontWeight:700,color:done?"#22c55e":"#e2e8f0",textDecoration:done?"line-through":"none"}},item.title),
+                h("span",{style:{fontSize:10,color:"#475569"}},item.time+" · "+item.dur+"分")
+              ),
+              h("div",{style:{fontSize:12,color:"#64748b",marginTop:3}},item.desc)
+            ),
+            h("div",{style:{fontSize:18,color:done?"#22c55e":"rgba(255,255,255,.12)",marginTop:2,flexShrink:0}},done?"✓":"○")
+          ),
+          details.length>0&&done&&h("div",null,...details)
+        );
+      }),
+      h("div",{style:{...S.card,marginTop:6,borderColor:morningAdvice?"rgba(99,102,241,.3)":"rgba(255,255,255,.08)"}},
+        h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},
+          h("div",{style:S.ct},"🌅 今朝の体調アドバイス"),
+          morningDate&&h("span",{style:{fontSize:10,color:"#475569"}},morningDate)
+        ),
+        morningAdvice
+          ? h("div",null,
+              h("div",{style:{fontSize:13,color:"#cbd5e1",lineHeight:1.85,whiteSpace:"pre-wrap",marginBottom:12}},morningAdvice),
+              h("button",{style:{...S.btn("s"),marginTop:4},onClick:handleMorningAdvice,disabled:morningLoading},"🔄 再取得")
+            )
+          : h("div",null,
+              h("div",{style:{fontSize:12,color:"#64748b",marginBottom:14,lineHeight:1.7}},
+                "血圧・服薬・食事データをもとに、今日の体調バランスと",h("br"),
+                "一日のアドバイスをAIが個別に提案します"
+              ),
+              h("div",{style:{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}},
+                [["🩺","血圧状態チェック"],["💪","運動強度の提案"],["🍽️","食事アドバイス"],["😌","生活ヒント"]].map(([ic,lb])=>
+                  h("span",{key:lb,style:{fontSize:11,color:"#64748b",background:"rgba(255,255,255,.04)",
+                    border:"1px solid rgba(255,255,255,.08)",borderRadius:20,padding:"3px 9px"}},ic," ",lb)
+                )
+              ),
+              h("button",{style:S.btn(),onClick:handleMorningAdvice,disabled:morningLoading},
+                morningLoading?"⏳ 分析中...":"🌅 今朝のアドバイスを受ける"
+              )
+            )
+      )
+    ),
+
+    // ══ HISTORY ══
+    tab==="history"&&h("div",{style:S.sec},
+      h("div",{style:{fontSize:12,color:"#475569",marginBottom:10}},`合計 ${records.length} 件`),
+      records.length===0&&h("div",{style:{...S.card,textAlign:"center",padding:30,color:"#475569",fontSize:13}},"記録がありません"),
+      [...records].reverse().map(r=>{
+        const e=evalBP(r.sys,r.dia,r.pulse);
+        const dl=getLog(r.date);
+        return h("div",{key:r.id,style:{...S.card,padding:"12px 14px"}},
+          h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}},
+            h("div",{style:{flex:1}},
+              h("div",{style:{fontSize:11,color:"#64748b",marginBottom:4}},r.date),
+              h("div",{style:{fontSize:18,fontWeight:800}},
+                h("span",{style:{color:"#ef4444"}},r.sys),
+                h("span",{style:{color:"#475569",fontSize:13}},"/"),
+                h("span",{style:{color:"#3b82f6"}},r.dia),
+                r.pulse&&h("span",{style:{color:"#a855f7",fontSize:13,marginLeft:8}},"♥",r.pulse)
+              ),
+              h("span",{style:{...S.badge(e.color),fontSize:11,padding:"2px 8px",marginTop:5,display:"inline-block"}},e.status),
+              dl.breakfast&&h("div",{style:{fontSize:11,color:"#64748b",marginTop:4}},"🍱 ",dl.breakfast),
+              r.note&&h("div",{style:{fontSize:11,color:"#475569",marginTop:2}},r.note)
+            ),
+            h("button",{onClick:()=>delBP(r.id),style:{background:"none",border:"none",color:"#374151",cursor:"pointer",fontSize:18,padding:4}},"×")
+          )
+        );
+      })
+    ),
+
+    // ══ PROFILE ══
+    tab==="profile"&&h("div",{style:S.sec},
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"👤 基本情報"),
+        h("div",{style:{display:"flex",flexDirection:"column",gap:9}},
+          h("input",{style:S.inp,placeholder:"お名前",value:profile.name,onChange:e=>setProfile(p=>({...p,name:e.target.value}))}),
+          h("div",{style:S.row},
+            h("input",{type:"number",style:S.inp,placeholder:"年齢",value:profile.age,onChange:e=>setProfile(p=>({...p,age:e.target.value}))}),
+            h("select",{style:{...S.sel,flex:"0 0 100px"},value:profile.gender,onChange:e=>setProfile(p=>({...p,gender:e.target.value}))},
+              ["男性","女性"].map(g=>h("option",{key:g,value:g},g))
+            )
+          ),
+          h("div",{style:S.row},
+            h("input",{type:"number",style:S.inp,placeholder:"身長 (cm)",value:profile.height,onChange:e=>setProfile(p=>({...p,height:e.target.value}))}),
+            h("input",{type:"number",style:S.inp,placeholder:"体重 (kg)",value:profile.weight,onChange:e=>setProfile(p=>({...p,weight:e.target.value}))})
+          ),
+          h("select",{style:S.sel,value:profile.bloodType,onChange:e=>setProfile(p=>({...p,bloodType:e.target.value}))},
+            h("option",{value:""},"血液型を選択"),
+            ["A型","B型","O型","AB型","A+","A-","B+","B-","O+","O-","AB+","AB-"].map(t=>h("option",{key:t,value:t},t))
+          )
+        )
+      ),
+      (profile.height&&profile.weight)&&(()=>{
+        const h2=Number(profile.height),w=Number(profile.weight);
+        const bmi=(w/((h2/100)**2)).toFixed(1);
+        const ideal=((h2-100)*0.9).toFixed(1);
+        const diff=(w-Number(ideal)).toFixed(1);
+        const bc=bmi<18.5?"#6366f1":bmi<23?"#22c55e":bmi<25?"#84cc16":bmi<30?"#f97316":"#ef4444";
+        const bl=bmi<18.5?"低体重":bmi<23?"正常範囲":bmi<25?"過体重":bmi<30?"肥満1度":"肥満2度";
+        const ba=bmi<18.5?"体重増加が必要です。タンパク質摂取を増やしましょう。":bmi<23?"理想的な体重です。現状を維持しましょう。":bmi<25?"やや過体重です。食事管理と運動を推奨します。":"肥満状態です。糖尿病・高血圧悪化のリスクがあります。医師と相談してください。";
+        return h("div",{style:{...S.card,borderColor:`${bc}30`}},
+          h("div",{style:S.ct},"📊 身体指数（自動計算）"),
+          h("div",{style:S.row},
+            h("div",{style:S.stat(bc)},h("div",{style:{...S.sv,color:bc}},bmi),h("div",{style:S.sl},"BMI")),
+            h("div",{style:S.stat("#38bdf8")},h("div",{style:{...S.sv,color:"#38bdf8",fontSize:20}},ideal+"kg"),h("div",{style:S.sl},"標準体重")),
+            h("div",{style:S.stat(diff>0?"#f97316":"#22c55e")},
+              h("div",{style:{...S.sv,color:diff>0?"#f97316":"#22c55e",fontSize:20}},(diff>0?"+":"")+diff+"kg"),
+              h("div",{style:S.sl},"標準との差")
+            )
+          ),
+          h("div",{style:{marginTop:10}},
+            h("span",{style:S.badge(bc)},bl),
+            h("div",{style:{fontSize:12,color:"#94a3b8",marginTop:8}},"💡 ",ba)
+          )
+        );
+      })(),
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"🏥 健康情報"),
+        h("div",{style:{display:"flex",flexDirection:"column",gap:9}},
+          h("input",{style:S.inp,placeholder:"既往症（例：糖尿病、高血圧、高脂血症）",value:profile.conditions,onChange:e=>setProfile(p=>({...p,conditions:e.target.value}))}),
+          h("input",{style:S.inp,placeholder:"アレルギー・禁忌事項（例：アスピリン、海産物）",value:profile.allergies,onChange:e=>setProfile(p=>({...p,allergies:e.target.value}))})
+        )
+      ),
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"🩺 担当医・緊急連絡先"),
+        h("div",{style:{display:"flex",flexDirection:"column",gap:9}},
+          h("input",{style:S.inp,placeholder:"担当医の氏名",value:profile.doctorName,onChange:e=>setProfile(p=>({...p,doctorName:e.target.value}))}),
+          h("input",{style:S.inp,placeholder:"担当医の連絡先",value:profile.doctorPhone,onChange:e=>setProfile(p=>({...p,doctorPhone:e.target.value}))}),
+          h("input",{style:S.inp,placeholder:"緊急連絡先（ご家族）",value:profile.emergency,onChange:e=>setProfile(p=>({...p,emergency:e.target.value}))})
+        )
+      ),
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"📝 健康メモ"),
+        h("textarea",{style:{...S.inp,minHeight:80,resize:"vertical"},
+          placeholder:"特記事項・既往歴・手術歴など...",
+          value:profile.memo,onChange:e=>setProfile(p=>({...p,memo:e.target.value}))})
+      ),
+      h("button",{style:S.btn(),onClick:()=>saveProf(profile)},profSaved?"✅ 保存しました！":"💾 プロフィールを保存"),
+      h("div",{style:{height:10}})
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+</script>
+</body>
+</html>
