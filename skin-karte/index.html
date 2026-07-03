@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="mobile-web-app-capable" content="yes">
+<title>肌診断カルテ（プロトタイプ）</title>
+<style>
+  :root{
+    --pink:#e8a0a8;
+    --pink-dark:#c97a86;
+    --beige:#faf5f0;
+    --card:#ffffff;
+    --text:#3a3230;
+    --sub:#8a7f7c;
+    --line:#eee0dc;
+    --ok:#7fae8e;
+    --warn:#d99a5b;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+    background:var(--beige); color:var(--text);
+  }
+  #app{max-width:480px; margin:0 auto; min-height:100vh; background:var(--beige); padding-bottom:24px; position:relative;}
+  header{
+    background:linear-gradient(135deg,var(--pink),var(--pink-dark));
+    color:#fff; padding:18px 16px; position:sticky; top:0; z-index:10;
+    display:flex; align-items:center; gap:10px;
+  }
+  header h1{font-size:17px; margin:0; font-weight:600;}
+  header .back{cursor:pointer; font-size:20px; padding:4px 8px; user-select:none;}
+  .view{padding:16px;}
+  .hidden{display:none !important;}
+  .card{
+    background:var(--card); border-radius:14px; padding:16px; margin-bottom:14px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.04); border:1px solid var(--line);
+  }
+  .member-item, .product-item{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:14px; background:var(--card); border-radius:12px; margin-bottom:10px;
+    border:1px solid var(--line); cursor:pointer;
+  }
+  .member-item:active, .product-item:active{background:#fff6f4;}
+  .member-name, .product-title{font-weight:600; font-size:15px;}
+  .member-sub, .product-sub{font-size:12px; color:var(--sub); margin-top:2px;}
+  .fab{
+    position:fixed; bottom:78px; left:50%; transform:translateX(-50%);
+    max-width:448px; width:calc(100% - 32px);
+    background:var(--pink-dark); color:#fff; border:none; border-radius:14px;
+    padding:14px; font-size:15px; font-weight:600; box-shadow:0 4px 14px rgba(0,0,0,0.15);
+    z-index:15;
+  }
+  .fab.no-tabbar{bottom:24px;}
+  button{font-family:inherit; cursor:pointer;}
+  .btn-primary{
+    background:var(--pink-dark); color:#fff; border:none; border-radius:10px;
+    padding:12px 16px; font-size:14px; font-weight:600; width:100%;
+  }
+  .btn-outline{
+    background:#fff; color:var(--pink-dark); border:1px solid var(--pink-dark);
+    border-radius:10px; padding:12px 16px; font-size:14px; font-weight:600; width:100%;
+  }
+  .btn-danger{
+    background:#fff; color:#c95a5a; border:1px solid #e3b3b3;
+    border-radius:10px; padding:10px 14px; font-size:13px; width:100%;
+  }
+  input, textarea, select{
+    width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px;
+    font-size:14px; margin-top:4px; font-family:inherit; background:#fff;
+  }
+  label{font-size:12px; color:var(--sub); display:block; margin-top:10px;}
+  h2{font-size:16px; margin:0 0 10px;}
+  h3{font-size:14px; margin:0 0 8px; color:var(--pink-dark);}
+  .empty{text-align:center; color:var(--sub); font-size:13px; padding:40px 0;}
+  video, canvas{width:100%; border-radius:12px; background:#000;}
+  .cam-wrap{position:relative;}
+  .score-row{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:13px;}
+  .score-bar-bg{flex:1; height:8px; background:#f0e6e2; border-radius:4px; margin:0 10px; overflow:hidden;}
+  .score-bar{height:100%; background:var(--pink-dark); border-radius:4px;}
+  .tag{
+    display:inline-block; background:#fce9e5; color:var(--pink-dark);
+    padding:4px 10px; border-radius:20px; font-size:12px; font-weight:600; margin:0 4px 4px 0;
+  }
+  .tag.small{padding:2px 8px; font-size:11px;}
+  .history-item{border-left:2px solid var(--pink); padding:8px 0 8px 12px; margin-bottom:8px;}
+  .history-date{font-size:11px; color:var(--sub);}
+  .history-type{font-size:13px; font-weight:600;}
+  .product-card{
+    display:flex; gap:10px; align-items:flex-start; background:#fff8f6;
+    border:1px solid var(--pink); border-radius:10px; padding:10px; margin-bottom:8px;
+  }
+  .product-icon{
+    width:36px; height:36px; border-radius:8px; background:var(--pink);
+    color:#fff; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0;
+  }
+  .product-name{font-size:13px; font-weight:600;}
+  .product-desc{font-size:11px; color:var(--sub); margin-top:2px;}
+  .notice{
+    background:#fff4e6; border:1px solid #f3d9a8; color:#8a6a2a;
+    border-radius:10px; padding:10px 12px; font-size:12px; margin-bottom:12px;
+  }
+  .checkbox-group label{
+    display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text);
+    margin-top:8px; font-weight:normal;
+  }
+  .checkbox-group input{width:auto; margin:0;}
+  #tabbar{
+    position:fixed; bottom:0; left:50%; transform:translateX(-50%);
+    width:100%; max-width:480px; display:flex; background:#fff;
+    border-top:1px solid var(--line); z-index:20;
+  }
+  #tabbar button{
+    flex:1; background:none; border:none; padding:10px 0 8px; font-size:11px;
+    color:var(--sub); display:flex; flex-direction:column; align-items:center; gap:2px;
+  }
+  #tabbar button .icon{font-size:18px;}
+  #tabbar button.active{color:var(--pink-dark); font-weight:600;}
+  #toast{
+    position:fixed; bottom:100px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,0.75); color:#fff; padding:10px 18px; border-radius:20px;
+    font-size:13px; opacity:0; pointer-events:none; transition:opacity .3s; z-index:30;
+  }
+  .skintype-row{display:flex; align-items:center; gap:10px; margin-top:6px;}
+  .skintype-row select{margin-top:0;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ホーム：顧客一覧タブ -->
+  <div id="view-home" class="view">
+    <header><h1>肌診断カルテ</h1></header>
+    <div class="view" style="padding:16px 0 100px;">
+      <div class="notice">これは土台（プロトタイプ）です。AI診断は簡易ロジックで動作を再現しています。</div>
+      <h2>顧客一覧</h2>
+      <div id="member-list"></div>
+      <div id="member-empty" class="empty hidden">まだ顧客が登録されていません。<br>右下の「＋」から新規登録してください。</div>
+    </div>
+    <button class="fab" onclick="showAddMember()">＋ 新規顧客を登録</button>
+  </div>
+
+  <!-- 新規顧客登録 -->
+  <div id="view-add" class="view hidden">
+    <header><span class="back" onclick="goHome()">←</span><h1>新規顧客登録</h1></header>
+    <div class="card">
+      <label>お名前</label>
+      <input id="add-name" placeholder="例）山田 花子">
+      <label>年齢</label>
+      <input id="add-age" type="number" placeholder="例）48">
+      <label>メモ（肌の悩み・体質など）</label>
+      <textarea id="add-memo" rows="3" placeholder="任意"></textarea>
+    </div>
+    <button class="btn-primary" onclick="submitAddMember()">登録する</button>
+  </div>
+
+  <!-- 顧客カルテ詳細 -->
+  <div id="view-member" class="view hidden">
+    <header><span class="back" onclick="goHome()">←</span><h1 id="member-detail-name">カルテ</h1></header>
+    <div class="view" style="padding:16px 0 100px;">
+      <div class="card">
+        <h3>基本情報</h3>
+        <div id="member-detail-info" style="font-size:13px; color:var(--sub);"></div>
+        <div class="skintype-row">
+          <label style="margin:0; white-space:nowrap;">肌タイプ：</label>
+          <select id="member-skintype-select" onchange="updateMemberSkinType()">
+            <option value="">未設定</option>
+            <option value="乾燥肌">乾燥肌</option>
+            <option value="脂性肌">脂性肌</option>
+            <option value="混合肌">混合肌</option>
+            <option value="普通肌">普通肌</option>
+          </select>
+        </div>
+        <label style="margin-top:8px;">
+          <input type="checkbox" id="member-sensitive-check" style="width:auto;" onchange="updateMemberSkinType()"> 敏感肌傾向あり
+        </label>
+      </div>
+      <div class="card">
+        <h3>おすすめアイテム</h3>
+        <div id="member-products"></div>
+      </div>
+      <div class="card">
+        <h3>診断履歴</h3>
+        <div id="history-list"></div>
+        <div id="history-empty" class="empty hidden">診断履歴はまだありません。</div>
+      </div>
+    </div>
+    <button class="fab no-tabbar" onclick="startDiagnoseFlow()">📷 肌診断する</button>
+  </div>
+
+  <!-- 撮影・AI診断フロー -->
+  <div id="view-diagnose" class="view hidden">
+    <header><span class="back" onclick="cancelDiagnose()">←</span><h1>肌診断</h1></header>
+
+    <div id="step-camera" class="view">
+      <div class="card">
+        <p style="font-size:13px; color:var(--sub); margin-top:0;">正面を向いて、明るい場所で顔全体が写るように撮影してください。</p>
+        <div class="cam-wrap">
+          <video id="video" autoplay playsinline></video>
+        </div>
+        <div id="cam-error" class="notice hidden" style="margin-top:10px;"></div>
+      </div>
+      <button class="btn-primary" onclick="capturePhoto()">この画面で撮影する</button>
+    </div>
+
+    <div id="step-preview" class="view hidden">
+      <div class="card">
+        <canvas id="canvas"></canvas>
+      </div>
+      <button class="btn-primary" onclick="runDiagnosis()">この写真でAI診断する</button>
+      <div style="height:8px;"></div>
+      <button class="btn-outline" onclick="retakePhoto()">撮り直す</button>
+    </div>
+
+    <div id="step-analyzing" class="view hidden">
+      <div class="card empty">
+        <p>AIが肌の状態を解析しています…</p>
+      </div>
+    </div>
+
+    <div id="step-result" class="view hidden">
+      <div class="card">
+        <h3>診断結果</h3>
+        <p id="result-tags"></p>
+        <div id="result-scores" style="margin-top:12px;"></div>
+        <p id="result-comment" style="font-size:13px; color:var(--sub);"></p>
+      </div>
+      <div class="card">
+        <h3>おすすめアイテム</h3>
+        <div id="result-products"></div>
+      </div>
+      <button class="btn-primary" onclick="saveDiagnosisResult()">カルテに保存する</button>
+    </div>
+  </div>
+
+  <!-- 肌診断タブ：診断する顧客を選ぶ -->
+  <div id="view-diagnose-select" class="view hidden">
+    <header><h1>肌診断</h1></header>
+    <div class="view" style="padding:16px 0 100px;">
+      <div class="notice">診断したい顧客を選んでください。撮影から始まります。</div>
+      <h2>顧客を選ぶ</h2>
+      <div id="diagnose-select-list"></div>
+      <div id="diagnose-select-empty" class="empty hidden">まだ顧客が登録されていません。<br>先に「顧客」タブから登録してください。</div>
+    </div>
+  </div>
+
+  <!-- 商品一覧タブ -->
+  <div id="view-products" class="view hidden">
+    <header><h1>リマンコリア商品</h1></header>
+    <div class="view" style="padding:16px 0 100px;">
+      <div class="notice">登録した商品は、肌タイプに応じて診断結果画面やカルテに自動で表示されます。</div>
+      <h2>商品一覧</h2>
+      <div id="product-list"></div>
+      <div id="product-empty" class="empty hidden">まだ商品が登録されていません。<br>右下の「＋」から登録してください。</div>
+    </div>
+    <button class="fab" onclick="showAddProduct()">＋ 新規商品を登録</button>
+  </div>
+
+  <!-- 新規商品登録 -->
+  <div id="view-add-product" class="view hidden">
+    <header><span class="back" onclick="goProducts()">←</span><h1>新規商品登録</h1></header>
+    <div class="card">
+      <label>商品名</label>
+      <input id="prod-name" placeholder="例）モイストリペアクリーム">
+      <label>ブランド／ライン名（任意）</label>
+      <input id="prod-brand" placeholder="例）リマンコリア ◯◯ライン">
+      <label>対応する肌タイプ（複数選択可）</label>
+      <div class="checkbox-group">
+        <label><input type="checkbox" class="prod-type-check" value="乾燥肌"> 乾燥肌</label>
+        <label><input type="checkbox" class="prod-type-check" value="脂性肌"> 脂性肌</label>
+        <label><input type="checkbox" class="prod-type-check" value="混合肌"> 混合肌</label>
+        <label><input type="checkbox" class="prod-type-check" value="普通肌"> 普通肌</label>
+        <label><input type="checkbox" class="prod-type-check" value="敏感肌"> 敏感肌</label>
+      </div>
+      <label>説明・メモ（任意）</label>
+      <textarea id="prod-desc" rows="3" placeholder="効果や使い方など"></textarea>
+    </div>
+    <button class="btn-primary" onclick="submitAddProduct()">登録する</button>
+  </div>
+
+  <div id="tabbar">
+    <button id="tab-home" onclick="goHome()"><span class="icon">👤</span>顧客</button>
+    <button id="tab-diagnose" onclick="goDiagnoseTab()"><span class="icon">📷</span>肌診断</button>
+    <button id="tab-products" onclick="goProducts()"><span class="icon">🧴</span>商品</button>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+/* ===================== データ層（localStorage） ===================== */
+const STORAGE_KEY = "skinKarteData_v2";
+let storageAvailable = true;
+let memoryFallback = { members: [], diagnoses: [], products: [] };
+
+function loadData(){
+  let data;
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    data = raw ? JSON.parse(raw) : { members: [], diagnoses: [], products: [] };
+  }catch(e){
+    // file://で開いた場合など、ブラウザによってはlocalStorageがブロックされることがある。
+    // その場合はメモリ上だけで動作させ（保存はされないが）アプリ自体はクラッシュさせない。
+    storageAvailable = false;
+    console.warn("localStorageが利用できないため、一時的な保存のみで動作します。", e);
+    data = memoryFallback;
+  }
+  // 古いデータ構造からの移行対策（配列が無い場合は補完）
+  data.members = data.members || [];
+  data.diagnoses = data.diagnoses || [];
+  data.products = data.products || [];
+  return data;
+}
+function saveData(data){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }catch(e){
+    storageAvailable = false;
+    memoryFallback = data;
+  }
+}
+let DATA = loadData();
+
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+const SKIN_TYPES = ["乾燥肌","脂性肌","混合肌","普通肌"];
+
+/* ===================== 画面遷移 ===================== */
+let currentMemberId = null;
+
+function showView(id){
+  document.querySelectorAll(".view").forEach(v=>{
+    if(v.id.startsWith("view-")) v.classList.add("hidden");
+  });
+  document.getElementById(id).classList.remove("hidden");
+}
+function setActiveTab(tabId){
+  document.querySelectorAll("#tabbar button").forEach(b=>b.classList.remove("active"));
+  const btn = document.getElementById(tabId);
+  if(btn) btn.classList.add("active");
+}
+function goHome(){
+  stopCamera();
+  showView("view-home");
+  setActiveTab("tab-home");
+  renderMemberList();
+}
+function goProducts(){
+  stopCamera();
+  showView("view-products");
+  setActiveTab("tab-products");
+  renderProductList();
+}
+function goDiagnoseTab(){
+  stopCamera();
+  showView("view-diagnose-select");
+  setActiveTab("tab-diagnose");
+  renderDiagnoseSelectList();
+}
+function renderDiagnoseSelectList(){
+  const list = document.getElementById("diagnose-select-list");
+  const empty = document.getElementById("diagnose-select-empty");
+  list.innerHTML = "";
+  if(DATA.members.length===0){
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+  DATA.members.slice().reverse().forEach(m=>{
+    const div = document.createElement("div");
+    div.className = "member-item";
+    div.onclick = ()=>startDiagnoseFor(m.id);
+    div.innerHTML = `
+      <div>
+        <div class="member-name">${escapeHtml(m.name)}</div>
+        <div class="member-sub">${m.age?m.age+"歳 ・ ":""}${m.skinType?m.skinType:"肌タイプ未設定"}</div>
+      </div>
+      <div style="color:var(--sub);">📷</div>`;
+    list.appendChild(div);
+  });
+}
+function startDiagnoseFor(memberId){
+  currentMemberId = memberId;
+  diagnoseOrigin = "tab";
+  showView("view-diagnose");
+  showStep("step-camera");
+  startCamera();
+}
+function showAddMember(){
+  document.getElementById("add-name").value="";
+  document.getElementById("add-age").value="";
+  document.getElementById("add-memo").value="";
+  showView("view-add");
+}
+function submitAddMember(){
+  const name = document.getElementById("add-name").value.trim();
+  const age = document.getElementById("add-age").value.trim();
+  const memo = document.getElementById("add-memo").value.trim();
+  if(!name){ toast("お名前を入力してください"); return; }
+  const member = { id: uid(), name, age, memo, skinType: "", sensitive:false, createdAt: new Date().toISOString() };
+  DATA.members.push(member);
+  saveData(DATA);
+  toast("顧客を登録しました");
+  goHome();
+}
+
+function renderMemberList(){
+  const list = document.getElementById("member-list");
+  const empty = document.getElementById("member-empty");
+  list.innerHTML = "";
+  if(DATA.members.length===0){
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+  DATA.members.slice().reverse().forEach(m=>{
+    const diagCount = DATA.diagnoses.filter(d=>d.memberId===m.id).length;
+    const div = document.createElement("div");
+    div.className = "member-item";
+    div.onclick = ()=>openMember(m.id);
+    div.innerHTML = `
+      <div>
+        <div class="member-name">${escapeHtml(m.name)}</div>
+        <div class="member-sub">${m.age?m.age+"歳 ・ ":""}${m.skinType?m.skinType+" ・ ":""}診断回数: ${diagCount}回</div>
+      </div>
+      <div style="color:var(--sub);">›</div>`;
+    list.appendChild(div);
+  });
+}
+
+function openMember(id){
+  currentMemberId = id;
+  const m = DATA.members.find(x=>x.id===id);
+  document.getElementById("member-detail-name").textContent = m.name + " さんのカルテ";
+  document.getElementById("member-detail-info").innerHTML =
+    `年齢：${m.age||"未登録"}歳<br>メモ：${escapeHtml(m.memo)||"（なし）"}`;
+  document.getElementById("member-skintype-select").value = m.skinType || "";
+  document.getElementById("member-sensitive-check").checked = !!m.sensitive;
+  renderMemberProducts(m);
+  renderHistory(id);
+  showView("view-member");
+}
+
+function updateMemberSkinType(){
+  const m = DATA.members.find(x=>x.id===currentMemberId);
+  if(!m) return;
+  m.skinType = document.getElementById("member-skintype-select").value;
+  m.sensitive = document.getElementById("member-sensitive-check").checked;
+  saveData(DATA);
+  renderMemberProducts(m);
+  toast("肌タイプを更新しました");
+}
+
+function renderMemberProducts(m){
+  const box = document.getElementById("member-products");
+  if(!m.skinType){
+    box.innerHTML = `<p class="empty" style="padding:12px 0;">肌タイプを設定すると、おすすめ商品が表示されます。</p>`;
+    return;
+  }
+  renderProductCardsInto(box, recommendProducts(m.skinType, m.sensitive));
+}
+
+function renderHistory(memberId){
+  const list = document.getElementById("history-list");
+  const empty = document.getElementById("history-empty");
+  const items = DATA.diagnoses.filter(d=>d.memberId===memberId).slice().reverse();
+  list.innerHTML = "";
+  if(items.length===0){ empty.classList.remove("hidden"); return; }
+  empty.classList.add("hidden");
+  items.forEach(d=>{
+    const div = document.createElement("div");
+    div.className = "history-item";
+    const date = new Date(d.date).toLocaleString("ja-JP");
+    div.innerHTML = `
+      <div class="history-date">${date}</div>
+      <div class="history-type">${d.skinType}${d.sensitive?"（敏感肌傾向）":""}</div>
+      <div style="font-size:12px; color:var(--sub);">
+        乾燥度${d.scores.dryness} / 皮脂${d.scores.oiliness} / シミ${d.scores.spots} / 毛穴${d.scores.pores} / ハリ${d.scores.elasticity}
+      </div>`;
+    list.appendChild(div);
+  });
+}
+
+/* ===================== 商品管理（リマンコリア商品） ===================== */
+function showAddProduct(){
+  document.getElementById("prod-name").value = "";
+  document.getElementById("prod-brand").value = "";
+  document.getElementById("prod-desc").value = "";
+  document.querySelectorAll(".prod-type-check").forEach(c=>c.checked=false);
+  showView("view-add-product");
+}
+function submitAddProduct(){
+  const name = document.getElementById("prod-name").value.trim();
+  const brand = document.getElementById("prod-brand").value.trim();
+  const desc = document.getElementById("prod-desc").value.trim();
+  const types = Array.from(document.querySelectorAll(".prod-type-check:checked")).map(c=>c.value);
+  if(!name){ toast("商品名を入力してください"); return; }
+  if(types.length===0){ toast("対応する肌タイプを1つ以上選んでください"); return; }
+  DATA.products.push({ id: uid(), name, brand, desc, skinTypes: types, createdAt: new Date().toISOString() });
+  saveData(DATA);
+  toast("商品を登録しました");
+  goProducts();
+}
+function deleteProduct(id){
+  DATA.products = DATA.products.filter(p=>p.id!==id);
+  saveData(DATA);
+  renderProductList();
+  toast("商品を削除しました");
+}
+
+function renderProductList(){
+  const list = document.getElementById("product-list");
+  const empty = document.getElementById("product-empty");
+  list.innerHTML = "";
+  if(DATA.products.length===0){
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+  DATA.products.slice().reverse().forEach(p=>{
+    const div = document.createElement("div");
+    div.className = "product-item";
+    div.style.flexDirection = "column";
+    div.style.alignItems = "stretch";
+    div.style.cursor = "default";
+    const tagsHtml = p.skinTypes.map(t=>`<span class="tag small">${t}</span>`).join("");
+    div.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+        <div>
+          <div class="product-title">${escapeHtml(p.name)}</div>
+          <div class="product-sub">${escapeHtml(p.brand)||""}</div>
+        </div>
+        <button class="btn-danger" style="width:auto; padding:6px 10px;" onclick="deleteProduct('${p.id}')">削除</button>
+      </div>
+      <div style="margin-top:8px;">${tagsHtml}</div>
+      ${p.desc?`<div class="product-sub" style="margin-top:6px;">${escapeHtml(p.desc)}</div>`:""}
+    `;
+    list.appendChild(div);
+  });
+}
+
+/* 肌タイプ／敏感肌フラグから、登録済み商品をマッチングして返す */
+function recommendProducts(skinType, sensitive){
+  const matched = DATA.products.filter(p=>{
+    const typeMatch = p.skinTypes.includes(skinType);
+    const sensitiveMatch = sensitive && p.skinTypes.includes("敏感肌");
+    return typeMatch || sensitiveMatch;
+  });
+  return matched;
+}
+function renderProductCardsInto(box, products){
+  box.innerHTML = "";
+  if(products.length===0){
+    box.innerHTML = `<p class="empty" style="padding:12px 0;">この肌タイプに合う登録商品がまだありません。<br>「商品」タブから商品を登録してください。</p>`;
+    return;
+  }
+  products.forEach(p=>{
+    const div = document.createElement("div");
+    div.className = "product-card";
+    div.innerHTML = `
+      <div class="product-icon">🧴</div>
+      <div>
+        <div class="product-name">${escapeHtml(p.name)}</div>
+        <div class="product-desc">${escapeHtml(p.brand)||""}${p.desc?"　"+escapeHtml(p.desc):""}</div>
+      </div>`;
+    box.appendChild(div);
+  });
+}
+
+/* ===================== カメラ撮影 ===================== */
+let mediaStream = null;
+let lastCaptureDataUrl = null;
+let diagnoseOrigin = "member"; // "member"＝カルテ画面から開始／"tab"＝肌診断タブから開始
+
+function startDiagnoseFlow(){
+  diagnoseOrigin = "member";
+  showView("view-diagnose");
+  showStep("step-camera");
+  startCamera();
+}
+function cancelDiagnose(){
+  stopCamera();
+  if(diagnoseOrigin === "tab"){
+    goDiagnoseTab();
+  }else{
+    showView("view-member");
+  }
+}
+function showStep(id){
+  ["step-camera","step-preview","step-analyzing","step-result"].forEach(s=>{
+    document.getElementById(s).classList.toggle("hidden", s!==id);
+  });
+}
+
+async function startCamera(){
+  const errBox = document.getElementById("cam-error");
+  errBox.classList.add("hidden");
+  try{
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user" }, audio: false
+    });
+    document.getElementById("video").srcObject = mediaStream;
+  }catch(e){
+    errBox.textContent = "カメラを起動できませんでした。ブラウザのカメラ権限をご確認ください。（" + e.message + "）";
+    errBox.classList.remove("hidden");
+  }
+}
+function stopCamera(){
+  if(mediaStream){
+    mediaStream.getTracks().forEach(t=>t.stop());
+    mediaStream = null;
+  }
+}
+
+function capturePhoto(){
+  const video = document.getElementById("video");
+  const canvas = document.getElementById("canvas");
+  canvas.width = video.videoWidth || 480;
+  canvas.height = video.videoHeight || 640;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  lastCaptureDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+  stopCamera();
+  showStep("step-preview");
+}
+function retakePhoto(){
+  showStep("step-camera");
+  startCamera();
+}
+
+/* ===================== 擬似AI肌診断ロジック =====================
+   ※土台段階のため、撮影画像の明るさ・色味を解析して疑似スコアを算出。
+   将来的には本物のAI画像診断API（肌解析専用API等）に差し替える想定。
+*/
+let lastResult = null;
+
+function runDiagnosis(){
+  showStep("step-analyzing");
+  setTimeout(()=>{
+    const canvas = document.getElementById("canvas");
+    lastResult = analyzeSkinFromCanvas(canvas);
+    renderResult(lastResult);
+    showStep("step-result");
+  }, 1200);
+}
+
+function analyzeSkinFromCanvas(canvas){
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  const img = ctx.getImageData(0,0,w,h).data;
+  let rSum=0,gSum=0,bSum=0, brightSum=0, n=0;
+  const step = 8; // 間引きしてざっくり解析
+  const brights = [];
+  for(let i=0;i<img.length;i+=4*step){
+    const r=img[i], g=img[i+1], b=img[i+2];
+    rSum+=r; gSum+=g; bSum+=b;
+    const bright = (r+g+b)/3;
+    brights.push(bright);
+    brightSum += bright;
+    n++;
+  }
+  const avgR=rSum/n, avgB=bSum/n, avgBright=brightSum/n;
+  let varAcc=0;
+  brights.forEach(b=>varAcc += Math.pow(b-avgBright,2));
+  const variance = Math.sqrt(varAcc/n); // 明暗のばらつき→毛穴・シミの疑似指標
+
+  // 0-100の疑似スコアに正規化
+  const dryness = clamp(Math.round(100 - avgBright/255*60 - avgR/255*10), 10, 95);
+  const oiliness = clamp(Math.round((avgBright/255)*70 + (avgB/255)*10), 10, 95);
+  const spots = clamp(Math.round(variance*1.8), 5, 90);
+  const pores = clamp(Math.round(variance*1.4 + 10), 5, 90);
+  const elasticity = clamp(Math.round(100 - (variance*1.1)), 10, 95);
+
+  let skinType = "普通肌";
+  if(dryness - oiliness > 15) skinType = "乾燥肌";
+  else if(oiliness - dryness > 15) skinType = "脂性肌";
+  else if(Math.abs(dryness-oiliness) <=15 && spots>50) skinType = "混合肌";
+  const sensitive = (spots>65 || pores>65);
+
+  const comment = `乾燥・皮脂バランスや明暗ムラから、${skinType}の傾向が見られます。継続して撮影・記録することで変化を追跡できます。`;
+
+  return {
+    skinType,
+    sensitive,
+    scores: { dryness, oiliness, spots, pores, elasticity },
+    comment,
+    image: lastCaptureDataUrl
+  };
+}
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+function renderResult(result){
+  const tagsBox = document.getElementById("result-tags");
+  tagsBox.innerHTML = `<span class="tag">${result.skinType}</span>` + (result.sensitive?`<span class="tag">敏感肌傾向</span>`:"");
+  document.getElementById("result-comment").textContent = result.comment;
+  const scoresBox = document.getElementById("result-scores");
+  const labels = {dryness:"乾燥度", oiliness:"皮脂量", spots:"シミ・くすみ", pores:"毛穴", elasticity:"ハリ"};
+  scoresBox.innerHTML = "";
+  Object.keys(labels).forEach(key=>{
+    const val = result.scores[key];
+    const row = document.createElement("div");
+    row.className = "score-row";
+    row.innerHTML = `
+      <span style="width:80px;">${labels[key]}</span>
+      <span class="score-bar-bg"><span class="score-bar" style="width:${val}%"></span></span>
+      <span style="width:30px; text-align:right;">${val}</span>`;
+    scoresBox.appendChild(row);
+  });
+
+  const prodBox = document.getElementById("result-products");
+  renderProductCardsInto(prodBox, recommendProducts(result.skinType, result.sensitive));
+}
+
+function saveDiagnosisResult(){
+  if(!lastResult || !currentMemberId) return;
+  DATA.diagnoses.push({
+    id: uid(),
+    memberId: currentMemberId,
+    date: new Date().toISOString(),
+    skinType: lastResult.skinType,
+    sensitive: lastResult.sensitive,
+    scores: lastResult.scores,
+    comment: lastResult.comment
+    // ※画像データはlocalStorage容量節約のため保存しない（必要なら image: lastResult.image を追加）
+  });
+  // 診断結果をもとに、顧客プロフィールの肌タイプも自動更新する
+  const m = DATA.members.find(x=>x.id===currentMemberId);
+  if(m){
+    m.skinType = lastResult.skinType;
+    m.sensitive = lastResult.sensitive;
+  }
+  saveData(DATA);
+  toast("カルテに保存しました");
+  openMember(currentMemberId);
+}
+
+/* ===================== ユーティリティ ===================== */
+function escapeHtml(str){
+  if(!str) return "";
+  return String(str).replace(/[&<>"']/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[s]));
+}
+let toastTimer=null;
+function toast(msg){
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.style.opacity = "1";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ el.style.opacity="0"; }, 1800);
+}
+
+/* ===================== 初期化 ===================== */
+if(!storageAvailable){
+  const notice = document.querySelector("#view-home .notice");
+  if(notice){
+    notice.innerHTML = "⚠️ このファイルを直接開いているため、データの保存ができません（アプリを閉じると消えます）。動作確認用としてはご利用いただけます。実際に運用する際は、サーバー上にアップロードしてURLからアクセスする形にしてください。";
+  }
+}
+setActiveTab("tab-home");
+renderMemberList();
+</script>
+</body>
+</html>
