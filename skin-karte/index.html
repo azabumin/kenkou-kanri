@@ -150,6 +150,12 @@
       <input id="add-name" placeholder="例）山田 花子">
       <label>年齢</label>
       <input id="add-age" type="number" placeholder="例）48">
+      <label>性別</label>
+      <select id="add-gender">
+        <option value="">未選択</option>
+        <option value="女性">女性</option>
+        <option value="男性">男性</option>
+      </select>
       <label>メモ（肌の悩み・体質など）</label>
       <textarea id="add-memo" rows="3" placeholder="任意"></textarea>
     </div>
@@ -389,15 +395,17 @@ function startDiagnoseFor(memberId){
 function showAddMember(){
   document.getElementById("add-name").value="";
   document.getElementById("add-age").value="";
+  document.getElementById("add-gender").value="";
   document.getElementById("add-memo").value="";
   showView("view-add");
 }
 function submitAddMember(){
   const name = document.getElementById("add-name").value.trim();
   const age = document.getElementById("add-age").value.trim();
+  const gender = document.getElementById("add-gender").value;
   const memo = document.getElementById("add-memo").value.trim();
   if(!name){ toast("お名前を入力してください"); return; }
-  const member = { id: uid(), name, age, memo, skinType: "", sensitive:false, createdAt: new Date().toISOString() };
+  const member = { id: uid(), name, age, gender, memo, skinType: "", sensitive:false, createdAt: new Date().toISOString() };
   DATA.members.push(member);
   saveData(DATA);
   toast("顧客を登録しました");
@@ -421,7 +429,7 @@ function renderMemberList(){
     div.innerHTML = `
       <div>
         <div class="member-name">${escapeHtml(m.name)}</div>
-        <div class="member-sub">${m.age?m.age+"歳 ・ ":""}${m.skinType?m.skinType+" ・ ":""}診断回数: ${diagCount}回</div>
+        <div class="member-sub">${m.gender?m.gender+" ・ ":""}${m.age?m.age+"歳 ・ ":""}${m.skinType?m.skinType+" ・ ":""}診断回数: ${diagCount}回</div>
       </div>
       <div style="color:var(--sub);">›</div>`;
     list.appendChild(div);
@@ -433,7 +441,7 @@ function openMember(id){
   const m = DATA.members.find(x=>x.id===id);
   document.getElementById("member-detail-name").textContent = m.name + " さんのカルテ";
   document.getElementById("member-detail-info").innerHTML =
-    `年齢：${m.age||"未登録"}歳<br>メモ：${escapeHtml(m.memo)||"（なし）"}`;
+    `性別：${m.gender||"未登録"}<br>年齢：${m.age||"未登録"}歳<br>メモ：${escapeHtml(m.memo)||"（なし）"}`;
   document.getElementById("member-skintype-select").value = m.skinType || "";
   document.getElementById("member-sensitive-check").checked = !!m.sensitive;
   renderMemberProducts(m);
@@ -467,16 +475,34 @@ function renderHistory(memberId){
   list.innerHTML = "";
   if(items.length===0){ empty.classList.remove("hidden"); return; }
   empty.classList.add("hidden");
-  items.forEach(d=>{
+  items.forEach((d, idx)=>{
     const div = document.createElement("div");
     div.className = "history-item";
+    div.style.cursor = "pointer";
     const date = new Date(d.date).toLocaleString("ja-JP");
+    const detailId = `history-detail-${idx}`;
+    const prodHtml = recommendProducts(d.skinType, d.sensitive).map(p=>`
+      <div class="product-card" style="margin-top:6px;">
+        <div class="product-icon">🧴</div>
+        <div>
+          <div class="product-name">${escapeHtml(p.name)}</div>
+          <div class="product-desc">${escapeHtml(p.brand)||""}${p.desc?"　"+escapeHtml(p.desc):""}</div>
+        </div>
+      </div>`).join("") || `<p class="empty" style="padding:8px 0;">この肌タイプに合う登録商品がまだありません。</p>`;
     div.innerHTML = `
-      <div class="history-date">${date}</div>
+      <div class="history-date">${date} <span style="float:right;">詳細を見る ▾</span></div>
       <div class="history-type">${d.skinType}${d.sensitive?"（敏感肌傾向）":""}</div>
       <div style="font-size:12px; color:var(--sub);">
         乾燥度${d.scores.dryness} / 皮脂${d.scores.oiliness} / シミ${d.scores.spots} / 毛穴${d.scores.pores} / ハリ${d.scores.elasticity}
+      </div>
+      <div id="${detailId}" class="hidden" style="margin-top:10px; border-top:1px dashed var(--line); padding-top:10px;">
+        <p style="font-size:12px; color:var(--sub); margin:0 0 8px;">${escapeHtml(d.comment)||""}</p>
+        <p style="font-size:11px; color:var(--sub); margin:0 0 4px;">この回のおすすめアイテム：</p>
+        ${prodHtml}
       </div>`;
+    div.onclick = ()=>{
+      document.getElementById(detailId).classList.toggle("hidden");
+    };
     list.appendChild(div);
   });
 }
