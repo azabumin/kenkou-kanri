@@ -38,6 +38,13 @@
     background:var(--card); border-radius:14px; padding:16px; margin-bottom:14px;
     box-shadow:0 2px 8px rgba(0,0,0,0.04); border:1px solid var(--line);
   }
+  .stat-row{display:flex; gap:10px; margin-bottom:14px;}
+  .stat-card{
+    flex:1; background:var(--card); border-radius:14px; padding:14px 8px; text-align:center;
+    border:1px solid var(--line); box-shadow:0 2px 8px rgba(0,0,0,0.04);
+  }
+  .stat-num{font-size:22px; font-weight:700; color:var(--pink-dark);}
+  .stat-label{font-size:11px; color:var(--sub); margin-top:2px;}
   .member-item, .product-item{
     display:flex; justify-content:space-between; align-items:center;
     padding:14px; background:var(--card); border-radius:12px; margin-bottom:10px;
@@ -75,8 +82,12 @@
   h2{font-size:16px; margin:0 0 10px;}
   h3{font-size:14px; margin:0 0 8px; color:var(--pink-dark);}
   .empty{text-align:center; color:var(--sub); font-size:13px; padding:40px 0;}
-  video, canvas{width:100%; border-radius:12px; background:#000;}
-  .cam-wrap{position:relative;}
+  canvas{width:100%; border-radius:12px; background:#000;}
+  .cam-placeholder{
+    text-align:center; padding:32px 0; background:var(--beige); border-radius:12px;
+    margin-bottom:14px; border:1px dashed var(--pink);
+  }
+  .cam-placeholder .emoji{font-size:40px;}
   .score-row{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:13px;}
   .score-bar-bg{flex:1; height:8px; background:#f0e6e2; border-radius:4px; margin:0 10px; overflow:hidden;}
   .score-bar{height:100%; background:var(--pink-dark); border-radius:4px;}
@@ -135,6 +146,23 @@
     <header><h1>肌診断カルテ</h1></header>
     <div class="view" style="padding:16px 0 100px;">
       <div class="notice">これは土台（プロトタイプ）です。AI診断は簡易ロジックで動作を再現しています。</div>
+
+      <div class="stat-row">
+        <div class="stat-card">
+          <div class="stat-num" id="stat-total">0</div>
+          <div class="stat-label">登録顧客</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num" id="stat-diagnosed">0</div>
+          <div class="stat-label">肌タイプ設定済み</div>
+        </div>
+      </div>
+
+      <div class="card hidden" id="skin-dist-card">
+        <h3>肌タイプ分布</h3>
+        <div id="skin-dist-list"></div>
+      </div>
+
       <h2>顧客一覧</h2>
       <div id="member-list"></div>
       <div id="member-empty" class="empty hidden">まだ顧客が登録されていません。<br>右下の「＋」から新規登録してください。</div>
@@ -156,6 +184,17 @@
         <option value="女性">女性</option>
         <option value="男性">男性</option>
       </select>
+      <label>肌タイプ（自己申告・任意）</label>
+      <select id="add-skintype">
+        <option value="">未設定</option>
+        <option value="乾燥肌">乾燥肌</option>
+        <option value="脂性肌">脂性肌</option>
+        <option value="混合肌">混合肌</option>
+        <option value="普通肌">普通肌</option>
+      </select>
+      <label style="margin-top:8px;">
+        <input type="checkbox" id="add-sensitive" style="width:auto;"> 敏感肌傾向あり
+      </label>
       <label>メモ（肌の悩み・体質など）</label>
       <textarea id="add-memo" rows="3" placeholder="任意"></textarea>
     </div>
@@ -203,12 +242,16 @@
     <div id="step-camera" class="view">
       <div class="card">
         <p style="font-size:13px; color:var(--sub); margin-top:0;">正面を向いて、明るい場所で顔全体が写るように撮影してください。</p>
-        <div class="cam-wrap">
-          <video id="video" autoplay playsinline></video>
+        <div class="cam-placeholder">
+          <div class="emoji">📷</div>
+          <p style="font-size:12px; color:var(--sub); margin-top:8px;">スマホ：タップするとカメラが直接起動します<br>PC：ファイル選択画面が開きます</p>
         </div>
-        <div id="cam-error" class="notice hidden" style="margin-top:10px;"></div>
+        <input type="file" id="camera-input" accept="image/*" capture="user" class="hidden">
+        <input type="file" id="gallery-input" accept="image/*" class="hidden">
       </div>
-      <button class="btn-primary" onclick="capturePhoto()">この画面で撮影する</button>
+      <button class="btn-primary" onclick="document.getElementById('camera-input').click()">📷 カメラで撮影する</button>
+      <div style="height:8px;"></div>
+      <button class="btn-outline" onclick="document.getElementById('gallery-input').click()">🖼 ギャラリーから選ぶ</button>
     </div>
 
     <div id="step-preview" class="view hidden">
@@ -346,19 +389,16 @@ function setActiveTab(tabId){
   if(btn) btn.classList.add("active");
 }
 function goHome(){
-  stopCamera();
   showView("view-home");
   setActiveTab("tab-home");
   renderMemberList();
 }
 function goProducts(){
-  stopCamera();
   showView("view-products");
   setActiveTab("tab-products");
   renderProductList();
 }
 function goDiagnoseTab(){
-  stopCamera();
   showView("view-diagnose-select");
   setActiveTab("tab-diagnose");
   renderDiagnoseSelectList();
@@ -390,12 +430,51 @@ function startDiagnoseFor(memberId){
   diagnoseOrigin = "tab";
   showView("view-diagnose");
   showStep("step-camera");
-  startCamera();
 }
+
+/* ===================== ダッシュボード（肌タイプ分布など） ===================== */
+function renderDashboard(){
+  document.getElementById("stat-total").textContent = DATA.members.length;
+  const diagnosedCount = DATA.members.filter(m=>m.skinType).length;
+  document.getElementById("stat-diagnosed").textContent = diagnosedCount;
+
+  const distCard = document.getElementById("skin-dist-card");
+  const distList = document.getElementById("skin-dist-list");
+  const total = DATA.members.length;
+
+  if(total===0 || diagnosedCount===0){
+    distCard.classList.add("hidden");
+    return;
+  }
+  distCard.classList.remove("hidden");
+  distList.innerHTML = "";
+  SKIN_TYPES.forEach(type=>{
+    const count = DATA.members.filter(m=>m.skinType===type).length;
+    if(count===0) return;
+    const pct = Math.round(count/total*100);
+    const row = document.createElement("div");
+    row.className = "score-row";
+    row.innerHTML = `
+      <span style="width:56px;">${type}</span>
+      <span class="score-bar-bg"><span class="score-bar" style="width:${pct}%"></span></span>
+      <span style="width:38px; text-align:right;">${count}人</span>`;
+    distList.appendChild(row);
+  });
+  const sensitiveCount = DATA.members.filter(m=>m.sensitive).length;
+  if(sensitiveCount>0){
+    const note = document.createElement("div");
+    note.style.cssText = "font-size:11px; color:var(--sub); margin-top:6px;";
+    note.textContent = `※ うち敏感肌傾向あり：${sensitiveCount}人`;
+    distList.appendChild(note);
+  }
+}
+
 function showAddMember(){
   document.getElementById("add-name").value="";
   document.getElementById("add-age").value="";
   document.getElementById("add-gender").value="";
+  document.getElementById("add-skintype").value="";
+  document.getElementById("add-sensitive").checked=false;
   document.getElementById("add-memo").value="";
   showView("view-add");
 }
@@ -403,9 +482,11 @@ function submitAddMember(){
   const name = document.getElementById("add-name").value.trim();
   const age = document.getElementById("add-age").value.trim();
   const gender = document.getElementById("add-gender").value;
+  const skinType = document.getElementById("add-skintype").value;
+  const sensitive = document.getElementById("add-sensitive").checked;
   const memo = document.getElementById("add-memo").value.trim();
   if(!name){ toast("お名前を入力してください"); return; }
-  const member = { id: uid(), name, age, gender, memo, skinType: "", sensitive:false, createdAt: new Date().toISOString() };
+  const member = { id: uid(), name, age, gender, memo, skinType, sensitive, createdAt: new Date().toISOString() };
   DATA.members.push(member);
   saveData(DATA);
   toast("顧客を登録しました");
@@ -413,6 +494,7 @@ function submitAddMember(){
 }
 
 function renderMemberList(){
+  renderDashboard();
   const list = document.getElementById("member-list");
   const empty = document.getElementById("member-empty");
   list.innerHTML = "";
@@ -593,8 +675,11 @@ function renderProductCardsInto(box, products){
   });
 }
 
-/* ===================== カメラ撮影 ===================== */
-let mediaStream = null;
+/* ===================== 撮影フロー（ファイル入力方式）=====================
+   getUserMediaではなく <input type="file" capture="user"> を使うことで、
+   HTTPS必須の制約やブラウザのカメラ権限まわりの問題を避け、
+   スマホでは端末標準のカメラアプリを直接起動できるようにしている。
+*/
 let lastCaptureDataUrl = null;
 let diagnoseOrigin = "member"; // "member"＝カルテ画面から開始／"tab"＝肌診断タブから開始
 
@@ -602,10 +687,8 @@ function startDiagnoseFlow(){
   diagnoseOrigin = "member";
   showView("view-diagnose");
   showStep("step-camera");
-  startCamera();
 }
 function cancelDiagnose(){
-  stopCamera();
   if(diagnoseOrigin === "tab"){
     goDiagnoseTab();
   }else{
@@ -618,40 +701,29 @@ function showStep(id){
   });
 }
 
-async function startCamera(){
-  const errBox = document.getElementById("cam-error");
-  errBox.classList.add("hidden");
-  try{
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user" }, audio: false
-    });
-    document.getElementById("video").srcObject = mediaStream;
-  }catch(e){
-    errBox.textContent = "カメラを起動できませんでした。ブラウザのカメラ権限をご確認ください。（" + e.message + "）";
-    errBox.classList.remove("hidden");
-  }
-}
-function stopCamera(){
-  if(mediaStream){
-    mediaStream.getTracks().forEach(t=>t.stop());
-    mediaStream = null;
-  }
-}
-
-function capturePhoto(){
-  const video = document.getElementById("video");
-  const canvas = document.getElementById("canvas");
-  canvas.width = video.videoWidth || 480;
-  canvas.height = video.videoHeight || 640;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  lastCaptureDataUrl = canvas.toDataURL("image/jpeg", 0.85);
-  stopCamera();
-  showStep("step-preview");
+function handlePhotoFile(file){
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const canvas = document.getElementById("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      lastCaptureDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      showStep("step-preview");
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
 }
 function retakePhoto(){
+  lastCaptureDataUrl = null;
+  document.getElementById("camera-input").value = "";
+  document.getElementById("gallery-input").value = "";
   showStep("step-camera");
-  startCamera();
 }
 
 /* ===================== 擬似AI肌診断ロジック =====================
@@ -781,6 +853,8 @@ if(!storageAvailable){
     notice.innerHTML = "⚠️ このファイルを直接開いているため、データの保存ができません（アプリを閉じると消えます）。動作確認用としてはご利用いただけます。実際に運用する際は、サーバー上にアップロードしてURLからアクセスする形にしてください。";
   }
 }
+document.getElementById("camera-input").addEventListener("change", e=>handlePhotoFile(e.target.files[0]));
+document.getElementById("gallery-input").addEventListener("change", e=>handlePhotoFile(e.target.files[0]));
 setActiveTab("tab-home");
 renderMemberList();
 </script>
