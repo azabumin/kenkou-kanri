@@ -43,8 +43,8 @@
     flex:1; background:var(--card); border-radius:14px; padding:14px 8px; text-align:center;
     border:1px solid var(--line); box-shadow:0 2px 8px rgba(0,0,0,0.04);
   }
-  .stat-num{font-size:22px; font-weight:700; color:var(--pink-dark);}
-  .stat-label{font-size:11px; color:var(--sub); margin-top:2px;}
+  .stat-num{font-size:20px; font-weight:700; color:var(--pink-dark);}
+  .stat-label{font-size:10px; color:var(--sub); margin-top:2px;}
   .member-item, .product-item{
     display:flex; justify-content:space-between; align-items:center;
     padding:14px; background:var(--card); border-radius:12px; margin-bottom:10px;
@@ -74,6 +74,10 @@
     background:#fff; color:#c95a5a; border:1px solid #e3b3b3;
     border-radius:10px; padding:10px 14px; font-size:13px; width:100%;
   }
+  .btn-sub{
+    background:#f2e9e5; color:var(--text); border:none; border-radius:10px;
+    padding:10px 14px; font-size:13px; width:100%;
+  }
   input, textarea, select{
     width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px;
     font-size:14px; margin-top:4px; font-family:inherit; background:#fff;
@@ -96,6 +100,7 @@
     padding:4px 10px; border-radius:20px; font-size:12px; font-weight:600; margin:0 4px 4px 0;
   }
   .tag.small{padding:2px 8px; font-size:11px;}
+  .tag.member{background:#fdeccf; color:#a06a1a;}
   .history-item{border-left:2px solid var(--pink); padding:8px 0 8px 12px; margin-bottom:8px;}
   .history-date{font-size:11px; color:var(--sub);}
   .history-type{font-size:13px; font-weight:600;}
@@ -136,6 +141,16 @@
   }
   .skintype-row{display:flex; align-items:center; gap:10px; margin-top:6px;}
   .skintype-row select{margin-top:0;}
+  .point-summary-row{
+    display:flex; justify-content:space-between; align-items:center; font-size:13px;
+    padding:8px 0; border-bottom:1px solid var(--line);
+  }
+  .point-summary-row:last-child{border-bottom:none;}
+  .purchase-item{
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:12px; padding:8px 0; border-bottom:1px dashed var(--line);
+  }
+  .purchase-item:last-child{border-bottom:none;}
 </style>
 </head>
 <body>
@@ -153,6 +168,10 @@
           <div class="stat-label">登録顧客</div>
         </div>
         <div class="stat-card">
+          <div class="stat-num" id="stat-members">0</div>
+          <div class="stat-label">正規会員</div>
+        </div>
+        <div class="stat-card">
           <div class="stat-num" id="stat-diagnosed">0</div>
           <div class="stat-label">肌タイプ設定済み</div>
         </div>
@@ -161,6 +180,17 @@
       <div class="card hidden" id="skin-dist-card">
         <h3>肌タイプ分布</h3>
         <div id="skin-dist-list"></div>
+      </div>
+
+      <div class="card">
+        <h3>月次ポイント集計（正規会員）</h3>
+        <label>対象月</label>
+        <input type="month" id="summary-month" onchange="renderMonthlyPointsSummary()">
+        <label>ポイント付与レート（何円で1pt）</label>
+        <input type="number" id="point-rate-input" min="1" onchange="updatePointRate()">
+        <div id="monthly-summary-list" style="margin-top:12px;"></div>
+        <div id="monthly-summary-empty" class="empty hidden" style="padding:16px 0;">正規会員がまだ登録されていません。</div>
+        <button class="btn-sub" style="margin-top:10px;" onclick="exportMonthlyPointsCSV()">Excel出力（CSV）</button>
       </div>
 
       <h2>顧客一覧</h2>
@@ -183,6 +213,11 @@
         <option value="">未選択</option>
         <option value="女性">女性</option>
         <option value="男性">男性</option>
+      </select>
+      <label>会員区分</label>
+      <select id="add-membertype">
+        <option value="非会員">非会員</option>
+        <option value="正規会員">正規会員</option>
       </select>
       <label>肌タイプ（自己申告・任意）</label>
       <select id="add-skintype">
@@ -209,6 +244,13 @@
         <h3>基本情報</h3>
         <div id="member-detail-info" style="font-size:13px; color:var(--sub);"></div>
         <div class="skintype-row">
+          <label style="margin:0; white-space:nowrap;">会員区分：</label>
+          <select id="member-type-select" onchange="updateMemberType()">
+            <option value="非会員">非会員</option>
+            <option value="正規会員">正規会員</option>
+          </select>
+        </div>
+        <div class="skintype-row">
           <label style="margin:0; white-space:nowrap;">肌タイプ：</label>
           <select id="member-skintype-select" onchange="updateMemberSkinType()">
             <option value="">未設定</option>
@@ -222,6 +264,18 @@
           <input type="checkbox" id="member-sensitive-check" style="width:auto;" onchange="updateMemberSkinType()"> 敏感肌傾向あり
         </label>
       </div>
+
+      <div class="card hidden" id="member-points-card">
+        <h3>ポイント実績</h3>
+        <div class="point-summary-row">
+          <span>累計ポイント</span>
+          <span id="member-total-points" style="font-weight:700; color:var(--pink-dark); font-size:16px;">0 pt</span>
+        </div>
+        <div id="purchase-list" style="margin-top:8px;"></div>
+        <div id="purchase-empty" class="empty hidden" style="padding:12px 0;">購入記録はまだありません。</div>
+        <button class="btn-sub" style="margin-top:10px;" onclick="showAddPurchase()">＋ 購入を記録する</button>
+      </div>
+
       <div class="card">
         <h3>おすすめアイテム</h3>
         <div id="member-products"></div>
@@ -233,6 +287,23 @@
       </div>
     </div>
     <button class="fab no-tabbar" onclick="startDiagnoseFlow()">📷 肌診断する</button>
+  </div>
+
+  <!-- 購入記録登録 -->
+  <div id="view-add-purchase" class="view hidden">
+    <header><span class="back" onclick="showView('view-member')">←</span><h1>購入を記録</h1></header>
+    <div class="card">
+      <label>商品名</label>
+      <input id="purchase-name" placeholder="例）モイストリペアクリーム">
+      <label>購入金額（円）</label>
+      <input id="purchase-amount" type="number" min="0" placeholder="例）5000">
+      <label>購入日</label>
+      <input id="purchase-date" type="date">
+      <label>メモ（任意）</label>
+      <textarea id="purchase-memo" rows="2" placeholder="任意"></textarea>
+      <p style="font-size:11px; color:var(--sub); margin-top:10px;" id="purchase-point-preview"></p>
+    </div>
+    <button class="btn-primary" onclick="submitAddPurchase()">記録する</button>
   </div>
 
   <!-- 撮影・AI診断フロー -->
@@ -339,15 +410,15 @@
 
 <script>
 /* ===================== データ層（localStorage） ===================== */
-const STORAGE_KEY = "skinKarteData_v2";
+const STORAGE_KEY = "skinKarteData_v3";
 let storageAvailable = true;
-let memoryFallback = { members: [], diagnoses: [], products: [] };
+let memoryFallback = { members: [], diagnoses: [], products: [], purchases: [], settings: { pointRate: 100 } };
 
 function loadData(){
   let data;
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
-    data = raw ? JSON.parse(raw) : { members: [], diagnoses: [], products: [] };
+    data = raw ? JSON.parse(raw) : { members: [], diagnoses: [], products: [], purchases: [], settings: { pointRate: 100 } };
   }catch(e){
     // file://で開いた場合など、ブラウザによってはlocalStorageがブロックされることがある。
     // その場合はメモリ上だけで動作させ（保存はされないが）アプリ自体はクラッシュさせない。
@@ -355,10 +426,13 @@ function loadData(){
     console.warn("localStorageが利用できないため、一時的な保存のみで動作します。", e);
     data = memoryFallback;
   }
-  // 古いデータ構造からの移行対策（配列が無い場合は補完）
+  // 古いデータ構造からの移行対策（項目が無い場合は補完）
   data.members = data.members || [];
   data.diagnoses = data.diagnoses || [];
   data.products = data.products || [];
+  data.purchases = data.purchases || [];
+  data.settings = data.settings || { pointRate: 100 };
+  if(!data.settings.pointRate) data.settings.pointRate = 100;
   return data;
 }
 function saveData(data){
@@ -432,9 +506,10 @@ function startDiagnoseFor(memberId){
   showStep("step-camera");
 }
 
-/* ===================== ダッシュボード（肌タイプ分布など） ===================== */
+/* ===================== ダッシュボード（肌タイプ分布・会員数） ===================== */
 function renderDashboard(){
   document.getElementById("stat-total").textContent = DATA.members.length;
+  document.getElementById("stat-members").textContent = DATA.members.filter(m=>m.memberType==="正規会員").length;
   const diagnosedCount = DATA.members.filter(m=>m.skinType).length;
   document.getElementById("stat-diagnosed").textContent = diagnosedCount;
 
@@ -444,35 +519,108 @@ function renderDashboard(){
 
   if(total===0 || diagnosedCount===0){
     distCard.classList.add("hidden");
+  }else{
+    distCard.classList.remove("hidden");
+    distList.innerHTML = "";
+    SKIN_TYPES.forEach(type=>{
+      const count = DATA.members.filter(m=>m.skinType===type).length;
+      if(count===0) return;
+      const pct = Math.round(count/total*100);
+      const row = document.createElement("div");
+      row.className = "score-row";
+      row.innerHTML = `
+        <span style="width:56px;">${type}</span>
+        <span class="score-bar-bg"><span class="score-bar" style="width:${pct}%"></span></span>
+        <span style="width:38px; text-align:right;">${count}人</span>`;
+      distList.appendChild(row);
+    });
+    const sensitiveCount = DATA.members.filter(m=>m.sensitive).length;
+    if(sensitiveCount>0){
+      const note = document.createElement("div");
+      note.style.cssText = "font-size:11px; color:var(--sub); margin-top:6px;";
+      note.textContent = `※ うち敏感肌傾向あり：${sensitiveCount}人`;
+      distList.appendChild(note);
+    }
+  }
+
+  document.getElementById("point-rate-input").value = DATA.settings.pointRate;
+  const monthInput = document.getElementById("summary-month");
+  if(!monthInput.value){
+    const now = new Date();
+    monthInput.value = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
+  }
+  renderMonthlyPointsSummary();
+}
+
+function updatePointRate(){
+  const v = parseInt(document.getElementById("point-rate-input").value) || 100;
+  DATA.settings.pointRate = v;
+  saveData(DATA);
+  renderMonthlyPointsSummary();
+  toast("ポイント付与レートを更新しました");
+}
+
+/* 購入金額からポイントを計算（例：レート100円なら100円ごとに1pt、切り捨て） */
+function calcPoints(amount){
+  const rate = DATA.settings.pointRate || 100;
+  return Math.floor(amount / rate);
+}
+
+function renderMonthlyPointsSummary(){
+  const list = document.getElementById("monthly-summary-list");
+  const empty = document.getElementById("monthly-summary-empty");
+  const month = document.getElementById("summary-month").value; // "YYYY-MM"
+  const officialMembers = DATA.members.filter(m=>m.memberType==="正規会員");
+  list.innerHTML = "";
+  if(officialMembers.length===0){
+    empty.classList.remove("hidden");
     return;
   }
-  distCard.classList.remove("hidden");
-  distList.innerHTML = "";
-  SKIN_TYPES.forEach(type=>{
-    const count = DATA.members.filter(m=>m.skinType===type).length;
-    if(count===0) return;
-    const pct = Math.round(count/total*100);
+  empty.classList.add("hidden");
+  officialMembers.forEach(m=>{
+    const purchases = DATA.purchases.filter(p=>p.memberId===m.id);
+    const monthPurchases = month ? purchases.filter(p=>p.date && p.date.startsWith(month)) : purchases;
+    const monthPoints = monthPurchases.reduce((sum,p)=>sum+p.points, 0);
+    const totalPoints = purchases.reduce((sum,p)=>sum+p.points, 0);
     const row = document.createElement("div");
-    row.className = "score-row";
+    row.className = "point-summary-row";
     row.innerHTML = `
-      <span style="width:56px;">${type}</span>
-      <span class="score-bar-bg"><span class="score-bar" style="width:${pct}%"></span></span>
-      <span style="width:38px; text-align:right;">${count}人</span>`;
-    distList.appendChild(row);
+      <span>${escapeHtml(m.name)}</span>
+      <span>当月 ${monthPoints}pt ／ 累計 ${totalPoints}pt</span>`;
+    list.appendChild(row);
   });
-  const sensitiveCount = DATA.members.filter(m=>m.sensitive).length;
-  if(sensitiveCount>0){
-    const note = document.createElement("div");
-    note.style.cssText = "font-size:11px; color:var(--sub); margin-top:6px;";
-    note.textContent = `※ うち敏感肌傾向あり：${sensitiveCount}人`;
-    distList.appendChild(note);
-  }
+}
+
+function exportMonthlyPointsCSV(){
+  const month = document.getElementById("summary-month").value;
+  const officialMembers = DATA.members.filter(m=>m.memberType==="正規会員");
+  if(officialMembers.length===0){ toast("正規会員が登録されていません"); return; }
+  const rows = [["氏名","会員区分","対象月","当月獲得ポイント","累計ポイント"]];
+  officialMembers.forEach(m=>{
+    const purchases = DATA.purchases.filter(p=>p.memberId===m.id);
+    const monthPurchases = month ? purchases.filter(p=>p.date && p.date.startsWith(month)) : purchases;
+    const monthPoints = monthPurchases.reduce((sum,p)=>sum+p.points, 0);
+    const totalPoints = purchases.reduce((sum,p)=>sum+p.points, 0);
+    rows.push([m.name, m.memberType, month||"", String(monthPoints), String(totalPoints)]);
+  });
+  const csv = "﻿" + rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ポイント集計_${month||"all"}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast("CSVを出力しました");
 }
 
 function showAddMember(){
   document.getElementById("add-name").value="";
   document.getElementById("add-age").value="";
   document.getElementById("add-gender").value="";
+  document.getElementById("add-membertype").value="非会員";
   document.getElementById("add-skintype").value="";
   document.getElementById("add-sensitive").checked=false;
   document.getElementById("add-memo").value="";
@@ -482,11 +630,12 @@ function submitAddMember(){
   const name = document.getElementById("add-name").value.trim();
   const age = document.getElementById("add-age").value.trim();
   const gender = document.getElementById("add-gender").value;
+  const memberType = document.getElementById("add-membertype").value;
   const skinType = document.getElementById("add-skintype").value;
   const sensitive = document.getElementById("add-sensitive").checked;
   const memo = document.getElementById("add-memo").value.trim();
   if(!name){ toast("お名前を入力してください"); return; }
-  const member = { id: uid(), name, age, gender, memo, skinType, sensitive, createdAt: new Date().toISOString() };
+  const member = { id: uid(), name, age, gender, memberType, memo, skinType, sensitive, createdAt: new Date().toISOString() };
   DATA.members.push(member);
   saveData(DATA);
   toast("顧客を登録しました");
@@ -510,7 +659,7 @@ function renderMemberList(){
     div.onclick = ()=>openMember(m.id);
     div.innerHTML = `
       <div>
-        <div class="member-name">${escapeHtml(m.name)}</div>
+        <div class="member-name">${escapeHtml(m.name)} ${m.memberType==="正規会員"?'<span class="tag member small">正規会員</span>':''}</div>
         <div class="member-sub">${m.gender?m.gender+" ・ ":""}${m.age?m.age+"歳 ・ ":""}${m.skinType?m.skinType+" ・ ":""}診断回数: ${diagCount}回</div>
       </div>
       <div style="color:var(--sub);">›</div>`;
@@ -524,21 +673,77 @@ function openMember(id){
   document.getElementById("member-detail-name").textContent = m.name + " さんのカルテ";
   document.getElementById("member-detail-info").innerHTML =
     `性別：${m.gender||"未登録"}<br>年齢：${m.age||"未登録"}歳<br>メモ：${escapeHtml(m.memo)||"（なし）"}`;
+  document.getElementById("member-type-select").value = m.memberType || "非会員";
   document.getElementById("member-skintype-select").value = m.skinType || "";
   document.getElementById("member-sensitive-check").checked = !!m.sensitive;
   renderMemberProducts(m);
+  renderMemberPoints(m);
   renderHistory(id);
   showView("view-member");
 }
 
-function updateMemberSkinType(){
+function updateMemberType(){
   const m = DATA.members.find(x=>x.id===currentMemberId);
   if(!m) return;
-  m.skinType = document.getElementById("member-skintype-select").value;
-  m.sensitive = document.getElementById("member-sensitive-check").checked;
+  m.memberType = document.getElementById("member-type-select").value;
   saveData(DATA);
-  renderMemberProducts(m);
-  toast("肌タイプを更新しました");
+  renderMemberPoints(m);
+  toast("会員区分を更新しました");
+}
+
+function renderMemberPoints(m){
+  const card = document.getElementById("member-points-card");
+  if(m.memberType !== "正規会員"){
+    card.classList.add("hidden");
+    return;
+  }
+  card.classList.remove("hidden");
+  const purchases = DATA.purchases.filter(p=>p.memberId===m.id).slice().reverse();
+  const totalPoints = purchases.reduce((sum,p)=>sum+p.points, 0);
+  document.getElementById("member-total-points").textContent = `${totalPoints} pt`;
+
+  const list = document.getElementById("purchase-list");
+  const empty = document.getElementById("purchase-empty");
+  list.innerHTML = "";
+  if(purchases.length===0){
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.remove("hidden");
+  empty.classList.add("hidden");
+  purchases.forEach(p=>{
+    const div = document.createElement("div");
+    div.className = "purchase-item";
+    div.innerHTML = `
+      <span>${p.date||""} ${escapeHtml(p.name)}</span>
+      <span>¥${Number(p.amount).toLocaleString()}（${p.points}pt）</span>`;
+    list.appendChild(div);
+  });
+}
+
+function showAddPurchase(){
+  document.getElementById("purchase-name").value = "";
+  document.getElementById("purchase-amount").value = "";
+  document.getElementById("purchase-memo").value = "";
+  const today = new Date().toISOString().split("T")[0];
+  document.getElementById("purchase-date").value = today;
+  document.getElementById("purchase-point-preview").textContent = "";
+  showView("view-add-purchase");
+}
+function submitAddPurchase(){
+  const name = document.getElementById("purchase-name").value.trim();
+  const amount = parseInt(document.getElementById("purchase-amount").value) || 0;
+  const date = document.getElementById("purchase-date").value;
+  const memo = document.getElementById("purchase-memo").value.trim();
+  if(!name){ toast("商品名を入力してください"); return; }
+  if(amount<=0){ toast("購入金額を入力してください"); return; }
+  const points = calcPoints(amount);
+  DATA.purchases.push({ id: uid(), memberId: currentMemberId, name, amount, date, memo, points, createdAt: new Date().toISOString() });
+  saveData(DATA);
+  toast(`購入を記録しました（${points}pt付与）`);
+  const m = DATA.members.find(x=>x.id===currentMemberId);
+  renderMemberPoints(m);
+  showView("view-member");
 }
 
 function renderMemberProducts(m){
@@ -855,6 +1060,11 @@ if(!storageAvailable){
 }
 document.getElementById("camera-input").addEventListener("change", e=>handlePhotoFile(e.target.files[0]));
 document.getElementById("gallery-input").addEventListener("change", e=>handlePhotoFile(e.target.files[0]));
+document.getElementById("purchase-amount").addEventListener("input", e=>{
+  const amount = parseInt(e.target.value) || 0;
+  const pts = calcPoints(amount);
+  document.getElementById("purchase-point-preview").textContent = amount>0 ? `付与予定ポイント：${pts}pt` : "";
+});
 setActiveTab("tab-home");
 renderMemberList();
 </script>
