@@ -84,6 +84,199 @@ function scoreMeal(meal){
   return{score,grade,tags};
 }
 
+// ── ローカル・ルールベース総合健康評価（API不要・完全無料） ──
+function buildHealthEvaluation(records,meds,dailyLogs,profile){
+  const hist=records.slice(-14);
+  const bmi=(profile.height&&profile.weight)?(profile.weight/((profile.height/100)**2)):null;
+  const ideal=profile.height?((profile.height-100)*0.9):null;
+  const conditions=profile.conditions||"";
+
+  // 1. 血圧トレンド分析
+  let bpSection;
+  if(hist.length===0){
+    bpSection="記録がありません。「血圧入力」タブから測定値を記録してください。";
+  }else{
+    const latest=hist[hist.length-1];
+    const evL=evalBP(latest.sys,latest.dia,latest.pulse);
+    const half=Math.ceil(hist.length/2);
+    const avgOf=arr=>arr.length?{sys:arr.reduce((s,r)=>s+r.sys,0)/arr.length,dia:arr.reduce((s,r)=>s+r.dia,0)/arr.length}:null;
+    const a1=avgOf(hist.slice(0,half)),a2=avgOf(hist.slice(half));
+    let trend="";
+    if(a1&&a2&&hist.slice(half).length>0){
+      const dS=a2.sys-a1.sys,dD=a2.dia-a1.dia;
+      trend=(dS<=-3||dD<=-3)?"直近は改善傾向です。":(dS>=3||dD>=3)?"直近はやや上昇傾向です。塩分・生活習慣を見直しましょう。":"ほぼ横ばいで安定しています。";
+    }
+    bpSection=`最新値: ${latest.sys}/${latest.dia}${latest.pulse?`（脈拍${latest.pulse}）`:""} → 判定「${evL.status}」\n${trend}\n${evL.advice.join("　")}`;
+  }
+
+  // 2. BMI・体重評価
+  let bmiSection;
+  if(bmi){
+    const bc=bmi<18.5?"低体重":bmi<23?"正常範囲":bmi<25?"過体重":bmi<30?"肥満1度":"肥満2度以上";
+    const riskNote=(conditions.includes("糖尿病")||conditions.includes("高血圧"))&&bmi>=25
+      ?`既往症（${conditions}）を踏まえると、体重管理が特に重要です。`
+      :"";
+    bmiSection=`BMI ${bmi.toFixed(1)}（${bc}）／標準体重 ${ideal.toFixed(1)}kg\n${riskNote}`;
+  }else{
+    bmiSection="身長・体重が未入力です。「プロフィール」タブから入力してください。";
+  }
+
+  // 3. 食生活評価
+  const mealEntries=Object.values(dailyLogs).slice(-7);
+  const scores=[];const tagCount={};
+  mealEntries.forEach(l=>{
+    [l.breakfast,l.lunch,l.dinner].forEach(meal=>{
+      const s=scoreMeal(meal);
+      if(s){scores.push(s.score);s.tags.forEach(tg=>{tagCount[tg.t]=(tagCount[tg.t]||0)+1;});}
+    });
+  });
+  let mealSection;
+  if(scores.length){
+    const avg=Math.round(scores.reduce((a,b)=>a+b,0)/scores.length);
+    const grade=avg>=80?"優秀":avg>=60?"良好":avg>=40?"普通":"要改善";
+    const topTags=Object.entries(tagCount).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([t])=>t).join("、");
+    mealSection=`直近7日間の平均食事スコア: ${avg}点（${grade}）\n${topTags?"目立った傾向: "+topTags:"特に目立った傾向はありません。"}`;
+  }else{
+    mealSection="食事記録がありません。「今日の記録」タブから記録してみましょう。";
+  }
+
+  // 4. 服薬遵守度の評価
+  const days=Object.keys(dailyLogs).slice(-14);
+  let adherenceSection;
+  if(meds.length===0){
+    adherenceSection="服薬の登録がありません。";
+  }else if(days.length===0){
+    adherenceSection="服薬記録がありません。";
+  }else{
+    let total=0,taken=0;
+    days.forEach(d=>{
+      const log=dailyLogs[d];
+      meds.forEach(m=>{
+        if(m.morning){total++;if((log.morningTaken||[]).includes(m.id))taken++;}
+        if(m.evening){total++;if((log.eveningTaken||[]).includes(m.id))taken++;}
+      });
+    });
+    const rate=total?Math.round(taken/total*100):0;
+    adherenceSection=`直近${days.length}日間の服薬遵守率: ${rate}%${rate<80?"\nやや低めです。飲み忘れ防止のため、服薬タイミングをルーティンに組み込みましょう。":"\n良好な服薬状況です。"}`;
+  }
+
+  // 5. 本日の推奨アクション3つ
+  const actions=[];
+  if(hist.length){
+    const evL=evalBP(hist[hist.length-1].sys,hist[hist.length-1].dia,hist[hist.length-1].pulse);
+    if(["高血圧1度","高血圧2度","高血圧クライシス","注意血圧"].includes(evL.status))actions.push("減塩・適度な運動を継続し、血圧を毎日記録しましょう。");
+  }
+  if(bmi&&bmi>=25)actions.push("間食を控え、ウォーキングなど軽い有酸素運動を習慣化しましょう。");
+  if(scores.length&&(scores.reduce((a,b)=>a+b,0)/scores.length)<60)actions.push("野菜・魚・大豆製品を意識して取り入れましょう。");
+  if(meds.length&&days.length){
+    let total=0,taken=0;
+    days.forEach(d=>{const log=dailyLogs[d];meds.forEach(m=>{if(m.morning){total++;if((log.morningTaken||[]).includes(m.id))taken++;}if(m.evening){total++;if((log.eveningTaken||[]).includes(m.id))taken++;}});});
+    if(total&&(taken/total*100)<80)actions.push("服薬時間にアラームを設定するなど、飲み忘れ対策をしましょう。");
+  }
+  const fallbackActions=["十分な睡眠をとりましょう。","水分をこまめに摂取しましょう。","毎日同じ時間に体調を記録する習慣をつけましょう。"];
+  let fi=0;
+  while(actions.length<3){actions.push(fallbackActions[fi%fallbackActions.length]);fi++;}
+
+  // 6. 受診が必要かどうか
+  let doctorSection;
+  const latestStatus=hist.length?evalBP(hist[hist.length-1].sys,hist[hist.length-1].dia,hist[hist.length-1].pulse).status:null;
+  if(latestStatus==="高血圧クライシス"){
+    doctorSection="血圧が危険域です。至急、医療機関を受診してください。";
+  }else if(latestStatus==="高血圧2度"){
+    doctorSection="血圧が高めの状態が続いています。早めに医師に相談することをお勧めします。";
+  }else if(bmi&&bmi>=30){
+    doctorSection="BMIが高めです。生活習慣病予防のため、一度医師に相談すると安心です。";
+  }else{
+    doctorSection="現時点で緊急に受診が必要な数値ではありませんが、定期健診は継続しましょう。";
+  }
+
+  return `1. 血圧トレンド分析\n${bpSection}\n\n2. BMI・体重評価\n${bmiSection}\n\n3. 食生活評価\n${mealSection}\n\n4. 服薬遵守度の評価\n${adherenceSection}\n\n5. 本日の推奨アクション\n${actions.slice(0,3).map((a,i)=>`${i+1}. ${a}`).join("\n")}\n\n6. 受診が必要かどうか\n${doctorSection}\n\n※この評価は入力データに基づくルールベースの簡易評価です（無料・端末内で完結）。医療専門家の診断に代わるものではありません。`;
+}
+
+// ── ローカル・ルールベース朝のアドバイス（API不要・完全無料） ──
+function buildMorningAdvice(records,meds,dailyLogs,profile,routineLog,logDate){
+  const _nn=new Date();
+  const today=logDate||[_nn.getFullYear(),String(_nn.getMonth()+1).padStart(2,"0"),String(_nn.getDate()).padStart(2,"0")].join("-");
+  const getLog2=d=>dailyLogs[d]||{morningTaken:[],eveningTaken:[],breakfast:"",lunch:"",dinner:"",mealNote:""};
+  const tl=getLog2(today);
+  const lat=records[records.length-1];
+  const prev=records[records.length-2];
+  const evT=lat?evalBP(lat.sys,lat.dia,lat.pulse):null;
+  const weekBP=records.slice(-7);
+  const avgS=weekBP.length?Math.round(weekBP.reduce((s,r)=>s+r.sys,0)/weekBP.length):null;
+  const avgD=weekBP.length?Math.round(weekBP.reduce((s,r)=>s+r.dia,0)/weekBP.length):null;
+  const mornMeds=meds.filter(m=>m.morning);
+  const mornDone=mornMeds.length>0&&mornMeds.every(m=>(tl.morningTaken||[]).includes(m.id));
+  const walkIdx=6; const wr=(routineLog||{})[walkIdx]||{};
+  const walkDone=!!wr.done;
+  const status=evT?evT.status:"正常";
+
+  // 🩺 体調バランス評価
+  let bpText;
+  if(!lat){
+    bpText="血圧の記録がまだありません。まずは今朝測定して記録しましょう。";
+  }else{
+    let cmp="";
+    if(prev){
+      const dS=lat.sys-prev.sys, dD=lat.dia-prev.dia;
+      cmp=(dS<=-3||dD<=-3)?"前回より下がっています。":(dS>=3||dD>=3)?"前回よりやや上がっています。":"前回とほぼ同じ水準です。";
+    }
+    const weekCmp=(avgS!=null)?`週平均は${avgS}/${avgD}です。`:"";
+    bpText=`本日: ${lat.sys}/${lat.dia}${lat.pulse?`（脈拍${lat.pulse}）`:""} → 「${evT.status}」\n${cmp}${weekCmp}`;
+  }
+
+  // 💪 身体活動アドバイス
+  let exText;
+  if(["高血圧2度","高血圧クライシス"].includes(status)){
+    exText="今日は激しい運動は避け、短い散歩程度に留めましょう。";
+  }else if(status==="高血圧1度"||status==="注意血圧"){
+    exText="ウォーキング20〜30分など、軽めの有酸素運動がおすすめです。";
+  }else if(status==="低血圧"){
+    exText="急に立ち上がらないよう注意し、無理のない範囲で体を動かしましょう。";
+  }else{
+    exText="いつも通り、散歩やストレッチなど好きな運動を楽しみましょう。";
+  }
+  exText+=walkDone?"\n（本日の散歩はすでに完了しています。）":"\n（本日の散歩はまだ未実施です。）";
+
+  // 🍽️ 食事アドバイス
+  const meals7=Object.values(dailyLogs).slice(-7).flatMap(l=>[l.breakfast,l.lunch,l.dinner]).filter(Boolean);
+  const scored=meals7.map(m=>scoreMeal(m)).filter(Boolean);
+  const conditions=profile.conditions||"";
+  let mealText;
+  if(scored.length){
+    const avg=Math.round(scored.reduce((s,x)=>s+x.score,0)/scored.length);
+    mealText=avg>=70?"最近の食事バランスは良好です。この調子を続けましょう。":"最近やや乱れ気味です。野菜・魚を意識して取り入れましょう。";
+  }else{
+    mealText="食事記録が少ないようです。「今日の記録」タブからつけてみましょう。";
+  }
+  if(conditions.includes("高血圧"))mealText+="\n高血圧の既往があるため、塩分は控えめを意識してください。";
+  if(conditions.includes("糖尿病"))mealText+="\n糖尿病の既往があるため、糖質・甘い物は摂り過ぎに注意してください。";
+
+  // 😌 メンタル・生活アドバイス
+  const mentalOptions=[
+    "焦らず、今日も自分のペースで過ごしましょう。",
+    "新しい生活リズムに慣れる時間も大切です。ご自身を労わってください。",
+    "趣味や外出の時間を少しでも取り入れてみましょう。",
+    "十分な睡眠が、血圧にも心にも良い影響を与えます。"
+  ];
+  const mentalText=mentalOptions[new Date(today).getDate()%mentalOptions.length];
+
+  // ⚠️ 注意点
+  let warnText;
+  if(["高血圧2度","高血圧クライシス"].includes(status)){
+    warnText="血圧が高めです。頭痛やめまいなどの症状があれば、無理せず医師に相談してください。";
+  }else if(!mornDone&&mornMeds.length){
+    warnText="朝の服薬がまだ完了していません。忘れずに服用してください。";
+  }else{
+    warnText="特に大きな注意点はありません。いつも通り無理なく過ごしましょう。";
+  }
+
+  return {
+    text:`🩺 今朝の体調バランス評価\n${bpText}\n\n💪 今日の身体活動アドバイス\n${exText}\n\n🍽️ 今日の食事アドバイス\n${mealText}\n\n😌 今日のメンタル・生活アドバイス\n${mentalText}\n\n⚠️ 今日の注意点\n${warnText}`,
+    date:today
+  };
+}
+
 // ── SVG Line Chart ──
 function SvgChart({data}){
   if(!data||data.length===0)return h("div",{style:{color:"#475569",fontSize:12,textAlign:"center",padding:20}},"データがありません");
@@ -420,143 +613,26 @@ function App(){
     updLog(date,{[key]:arr.includes(medId)?arr.filter(x=>x!==medId):[...arr,medId]});
   };
 
-  const handleAI=async()=>{
+  const handleAI=()=>{
     setAiLoading(true);setAiResult(null);
-    try{
-      const bpHist=records.slice(-14).map(r=>`${r.date}: ${r.sys}/${r.dia}${r.pulse?`, 脈拍${r.pulse}`:""}`).join("\n");
-      const medList=meds.map(m=>`- ${m.name} ${m.dose}${m.unit} (${[m.morning?"朝":null,m.evening?"夕":null].filter(Boolean).join("・")}, ${m.timing})`).join("\n");
-      const meals=Object.entries(dailyLogs).slice(-7).map(([d,l])=>{
-        const ms=[l.breakfast&&`朝:${l.breakfast}`,l.lunch&&`昼:${l.lunch}`,l.dinner&&`夕:${l.dinner}`].filter(Boolean).join(", ");
-        return ms?`${d}: ${ms}`:null;
-      }).filter(Boolean).join("\n");
-      const tl=getLog(logDate);
-      const mMiss=meds.filter(m=>m.morning&&!(tl.morningTaken||[]).includes(m.id)).map(m=>m.name);
-      const eMiss=meds.filter(m=>m.evening&&!(tl.eveningTaken||[]).includes(m.id)).map(m=>m.name);
-      const bmi=(profile.height&&profile.weight)?(profile.weight/((profile.height/100)**2)).toFixed(1):"未入力";
-      const ideal=profile.height?((profile.height-100)*0.9).toFixed(1):"未入力";
-      const pInfo=`氏名:${profile.name||"未入力"}, 年齢:${profile.age||"未入力"}歳, 性別:${profile.gender}, 身長:${profile.height||"未入力"}cm, 体重:${profile.weight||"未入力"}kg, BMI:${bmi}, 標準体重:${ideal}kg, 血液型:${profile.bloodType||"未入力"}, 既往症:${profile.conditions||"なし"}, アレルギー:${profile.allergies||"なし"}`;
-      const prompt=`あなたは健康管理AIアシスタントです。以下のデータをもとに日本語で総合健康評価をしてください。
-
-【個人情報】
-${pInfo}
-
-【血圧・脈拍記録（直近14日）】
-${bpHist||"データなし"}
-
-【服薬中の薬】
-${medList||"登録なし"}
-
-【直近7日の食事記録】
-${meals||"記録なし"}
-
-【本日の未服薬】
-朝: ${mMiss.length?mMiss.join(", "):"すべて服薬済み"}
-夕: ${eMiss.length?eMiss.join(", "):"すべて服薬済みまたは対象外"}
-
-以下の項目で評価してください（個人プロフィールを必ず反映）：
-1. 血圧トレンド分析（年齢・性別基準との比較、改善/悪化/維持）
-2. BMI・体重評価（糖尿病・高血圧の観点から）
-3. 食生活評価（既往症を考慮、良い点と改善点）
-4. 服薬遵守度の評価
-5. 本日の推奨アクション3つ（個人状況に合わせて）
-6. 受診が必要かどうか`;
-      const apiKey=localStorage.getItem("hk-apikey")||"";
-      if(!apiKey){setAiResult("⚠️ APIキー未設定\n\n右上の ⚙️ 設定からAPIキーを入力してください。");setAiLoading(false);return;}
-      const res=await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "x-api-key":apiKey,
-          "anthropic-version":"2023-06-01",
-          "anthropic-dangerous-direct-browser-access":"true"
-        },
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1200,messages:[{role:"user",content:prompt}]})
-      });
-      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||res.status);}
-      const data=await res.json();
-      setAiResult(data.content?.find(b=>b.type==="text")?.text||"応答なし");
-    }catch(e){setAiResult("⚠️ AI評価エラー: "+e.message);}
-    setAiLoading(false);
+    setTimeout(()=>{
+      try{
+        setAiResult(buildHealthEvaluation(records,meds,dailyLogs,profile));
+      }catch(e){setAiResult("⚠️ 評価エラー: "+e.message);}
+      setAiLoading(false);
+    },400);
   };
 
-  const handleMorningAdvice=async()=>{
+  const handleMorningAdvice=()=>{
     setMorningLoading(true);setMorningAdvice(null);
-    try{
-      const _nn=new Date();const today=logDate||[_nn.getFullYear(),String(_nn.getMonth()+1).padStart(2,"0"),String(_nn.getDate()).padStart(2,"0")].join("-");
-      const tl=getLog(today);
-      const lat=records[records.length-1];
-      const prev=records[records.length-2];
-      const bpToday=lat?`収縮期${lat.sys}/拡張期${lat.dia}${lat.pulse?`, 脈拍${lat.pulse}`:""}`:null;
-      const bpYest=prev?`収縮期${prev.sys}/拡張期${prev.dia}${prev.pulse?`, 脈拍${prev.pulse}`:""}`:null;
-      const bpTrend=bpToday&&bpYest?"最新: "+bpToday+"  前回: "+bpYest:bpToday?"最新: "+bpToday:"血圧データなし";
-      const evT=lat?evalBP(lat.sys,lat.dia,lat.pulse):null;
-      const mornMeds2=meds.filter(m=>m.morning);
-      const mornDone2=mornMeds2.length>0&&mornMeds2.every(m=>(tl.morningTaken||[]).includes(m.id));
-      const bmi=(profile.height&&profile.weight)?(profile.weight/((profile.height/100)**2)).toFixed(1):"未入力";
-      const weekBP=records.slice(-7);
-      const avgS=weekBP.length?Math.round(weekBP.reduce((s,r)=>s+r.sys,0)/weekBP.length):null;
-      const avgD=weekBP.length?Math.round(weekBP.reduce((s,r)=>s+r.dia,0)/weekBP.length):null;
-      const meals7=Object.entries(dailyLogs).slice(-7).map(([,l])=>[l.breakfast,l.lunch,l.dinner].filter(Boolean).join("、")).filter(Boolean).join(" / ");
-      const walkIdx=6; const wr=routineLog[walkIdx]||{};
-      const walkInfo=wr.done?(wr.walkMin?"散歩 "+wr.walkMin+"分"+(wr.walkKm?" "+wr.walkKm+"km":"")+(wr.walkSteps?" "+wr.walkSteps+"歩":""):"散歩 完了"):"散歩 未実施";
-      const prompt=`あなたは親切な健康管理AIコーチです。以下のデータをもとに、今朝の体調バランスチェックと一日のアドバイスを日本語で提供してください。
-
-【本人情報】
-氏名: ${profile.name||"未設定"}, 年齢: ${profile.age||"未設定"}歳, 性別: ${profile.gender}
-身長: ${profile.height||"未設定"}cm, 体重: ${profile.weight||"未設定"}kg, BMI: ${bmi}
-既往症: ${profile.conditions||"なし"}
-
-【今日の血圧・脈拍】
-${bpTrend}
-血圧判定: ${evT?evT.status:"データなし"}
-7日間平均: ${avgS?"収縮期 "+avgS+" / 拡張期 "+avgD:"データなし"}
-
-【今日の運動】
-${walkInfo}
-
-【朝の服薬】
-${mornDone2?"✅ 服薬済み":"⚠️ まだ服薬していません"}
-
-【直近7日の食事傾向】
-${meals7||"記録なし"}
-
-【今日の日付・曜日】
-${today} (${new Date(today).toLocaleDateString("ja-JP",{weekday:"long"})})
-
-以下の形式で、やさしく具体的にアドバイスしてください:
-
-🩺 今朝の体調バランス評価
-（血圧・脈拍・前日比・週間傾向を踏まえた評価）
-
-💪 今日の身体活動アドバイス
-（血圧状態に合わせた運動強度・散歩の目安など）
-
-🍽️ 今日の食事アドバイス
-（既往症と最近の食事傾向を踏まえた具体的な提案）
-
-😌 今日のメンタル・生活アドバイス
-（退職後の充実した生活のための一言）
-
-⚠️ 今日の注意点
-（今日特に気をつけること）`;
-      const apiKey2=localStorage.getItem("hk-apikey")||"";
-      if(!apiKey2){setMorningAdvice("⚠️ APIキー未設定\n\n右上の ⚙️ 設定からAPIキーを入力してください。");setMorningLoading(false);return;}
-      const res=await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "x-api-key":apiKey2,
-          "anthropic-version":"2023-06-01",
-          "anthropic-dangerous-direct-browser-access":"true"
-        },
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages:[{role:"user",content:prompt}]})
-      });
-      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||res.status);}
-      const data=await res.json();
-      setMorningAdvice(data.content?.find(b=>b.type==="text")?.text||"応答なし");
-      setMorningDate(today);
-    }catch(e){setMorningAdvice("⚠️ アドバイスエラー: "+e.message);}
-    setMorningLoading(false);
+    setTimeout(()=>{
+      try{
+        const r=buildMorningAdvice(records,meds,dailyLogs,profile,routineLog,logDate);
+        setMorningAdvice(r.text);
+        setMorningDate(r.date);
+      }catch(e){setMorningAdvice("⚠️ アドバイスエラー: "+e.message);}
+      setMorningLoading(false);
+    },400);
   };
 
   const latest=records[records.length-1];
@@ -1059,68 +1135,37 @@ ${today} (${new Date(today).toLocaleDateString("ja-JP",{weekday:"long"})})
       })
     ),
 
-    // ══ API KEY SETTINGS ══
+    // ══ AI評価について（無料・ローカル評価に変更済み） ══
     tab==="apikey"&&h("div",{style:S.sec},
-      h("div",{style:{...S.card,borderColor:"rgba(99,102,241,.3)"}},
-        h("div",{style:S.ct},"⚙️ AI機能の設定"),
-        h("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:16,lineHeight:1.8}},
-          "AI評価・朝のアドバイス機能を使うには",h("br"),
-          "AnthropicのAPIキーが必要です。",h("br"),
-          h("span",{style:{color:"#818cf8",fontWeight:700}},"コストは1回あたり約0.3〜0.5円"),
-          "と非常に安価です。"
+      h("div",{style:{...S.card,borderColor:"rgba(34,197,94,.3)"}},
+        h("div",{style:S.ct},"⚙️ AI評価機能について"),
+        h("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:10,lineHeight:1.8}},
+          "AI総合健康評価・今朝のアドバイス機能は",h("br"),
+          h("span",{style:{color:"#4ade80",fontWeight:700}},"端末内だけで完結するローカル評価"),
+          "に変更されました。",h("br"),
+          "外部サーバーへの通信は行われず、",h("br"),
+          h("span",{style:{color:"#4ade80",fontWeight:700}},"APIキーも追加料金も一切不要"),
+          "です。"
         ),
-        h("div",{style:{fontSize:11,color:"#64748b",marginBottom:6,fontWeight:700}},"APIキー（sk-ant-...）"),
-        h("input",{
-          id:"apikey-field",
-          type:"password",
-          placeholder:"sk-ant-api03-xxxxxxxxxx...",
-          defaultValue:localStorage.getItem("hk-apikey")||"",
-          style:{...S.inp,fontFamily:"monospace",fontSize:13,marginBottom:10}
-        }),
+        h("div",{style:{fontSize:12,color:"#64748b",lineHeight:1.8}},
+          "血圧・服薬・食事の記録データをもとに、",h("br"),
+          "あらかじめ組み込まれたルールに沿って評価・アドバイスを自動生成します。"
+        )
+      ),
+      h("div",{style:{...S.card,background:"rgba(239,68,68,.04)",borderColor:"rgba(239,68,68,.15)"}},
+        h("div",{style:S.ct},"🗑️ データの管理"),
+        h("div",{style:{fontSize:12,color:"#94a3b8",marginBottom:10,lineHeight:1.7}},
+          "この端末に保存されている記録（血圧・服薬・食事・プロフィール）をすべて削除します。元に戻せません。"
+        ),
         h("button",{
-          style:S.btn(),
+          style:S.btn("d"),
           onClick:()=>{
-            const k=document.getElementById("apikey-field").value.trim();
-            if(!k){alert("APIキーを入力してください");return;}
-            if(!k.startsWith("sk-ant-")){alert("正しいAPIキーを入力してください\n（sk-ant- で始まる文字列）");return;}
-            localStorage.setItem("hk-apikey",k);
-            alert("✅ APIキーを保存しました！\nAI評価機能が使えるようになりました。");
-          }
-        },"💾 APIキーを保存"),
-        h("div",{style:{marginTop:10}}),
-        h("button",{
-          style:{...S.btn("s"),marginTop:4},
-          onClick:()=>{
-            if(confirm("APIキーを削除しますか？")){
-              localStorage.removeItem("hk-apikey");
-              document.getElementById("apikey-field").value="";
-              alert("APIキーを削除しました");
+            if(confirm("すべてのデータを削除しますか？この操作は元に戻せません。")){
+              ["hk-records","hk-meds","hk-daily","hk-profile"].forEach(k=>{try{localStorage.removeItem(k);}catch{}});
+              location.reload();
             }
           }
-        },"🗑️ APIキーを削除")
-      ),
-      h("div",{style:S.card},
-        h("div",{style:S.ct},"📋 APIキーの取得方法"),
-        [
-          ["1","https://console.anthropic.com にアクセス"],
-          ["2","ログイン（アカウントがなければ無料登録）"],
-          ["3","左メニュー「API Keys」→「Create Key」"],
-          ["4","sk-ant-... で始まるキーをコピー"],
-          ["5","上の入力欄に貼り付けて「保存」"],
-        ].map(([n,t])=>h("div",{key:n,style:{display:"flex",gap:10,padding:"7px 0",borderBottom:"1px solid rgba(255,255,255,.04)"}},
-          h("span",{style:{width:20,height:20,borderRadius:"50%",background:"rgba(99,102,241,.3)",
-            color:"#818cf8",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",
-            justifyContent:"center",flexShrink:0}},n),
-          h("span",{style:{fontSize:12,color:"#94a3b8",lineHeight:1.6}},t)
-        ))
-      ),
-      h("div",{style:{...S.card,background:"rgba(34,197,94,.04)",borderColor:"rgba(34,197,94,.15)"}},
-        h("div",{style:S.ct},"💰 料金の目安"),
-        h("div",{style:{fontSize:12,color:"#94a3b8",lineHeight:2}},
-          "1回のAI評価：約0.3〜0.5円",h("br"),
-          "毎日1回使用：月額 約10〜15円",h("br"),
-          "$5チャージで数年分使えます"
-        )
+        },"🗑️ すべてのデータを削除")
       )
     ),
 
