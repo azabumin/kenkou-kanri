@@ -460,11 +460,13 @@ ${meals||"記録なし"}
 4. 服薬遵守度の評価
 5. 本日の推奨アクション3つ（個人状況に合わせて）
 6. 受診が必要かどうか`;
+      const apiKey=localStorage.getItem("hk-apikey")||"";
+      if(!apiKey){setAiResult("⚠️ APIキー未設定\n\n右上の ⚙️ 設定からAPIキーを入力してください。");setAiLoading(false);return;}
       const res=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{
           "Content-Type":"application/json",
-          "x-api-key":"",
+          "x-api-key":apiKey,
           "anthropic-version":"2023-06-01",
           "anthropic-dangerous-direct-browser-access":"true"
         },
@@ -537,11 +539,13 @@ ${today} (${new Date(today).toLocaleDateString("ja-JP",{weekday:"long"})})
 
 ⚠️ 今日の注意点
 （今日特に気をつけること）`;
+      const apiKey2=localStorage.getItem("hk-apikey")||"";
+      if(!apiKey2){setMorningAdvice("⚠️ APIキー未設定\n\n右上の ⚙️ 設定からAPIキーを入力してください。");setMorningLoading(false);return;}
       const res=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{
           "Content-Type":"application/json",
-          "x-api-key":"",
+          "x-api-key":apiKey2,
           "anthropic-version":"2023-06-01",
           "anthropic-dangerous-direct-browser-access":"true"
         },
@@ -581,7 +585,7 @@ ${today} (${new Date(today).toLocaleDateString("ja-JP",{weekday:"long"})})
   ];
 
   // ── TABS ──
-  const TABS=[["dashboard","📊 ダッシュボード"],["log","📝 今日の記録"],["meds","💊 服薬管理"],["input","🩺 血圧入力"],["routine","☀️ ルーティン"],["history","📋 記録一覧"],["profile","👤 プロフィール"]];
+  const TABS=[["dashboard","📊 ダッシュボード"],["log","📝 今日の記録"],["meds","💊 服薬管理"],["input","🩺 血圧入力"],["routine","☀️ ルーティン"],["history","📋 記録一覧"],["profile","👤 プロフィール"],["apikey","⚙️ 設定"]];
 
   return h("div",{style:S.app},
     // ── Header ──
@@ -1053,6 +1057,71 @@ ${today} (${new Date(today).toLocaleDateString("ja-JP",{weekday:"long"})})
           )
         );
       })
+    ),
+
+    // ══ API KEY SETTINGS ══
+    tab==="apikey"&&h("div",{style:S.sec},
+      h("div",{style:{...S.card,borderColor:"rgba(99,102,241,.3)"}},
+        h("div",{style:S.ct},"⚙️ AI機能の設定"),
+        h("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:16,lineHeight:1.8}},
+          "AI評価・朝のアドバイス機能を使うには",h("br"),
+          "AnthropicのAPIキーが必要です。",h("br"),
+          h("span",{style:{color:"#818cf8",fontWeight:700}},"コストは1回あたり約0.3〜0.5円"),
+          "と非常に安価です。"
+        ),
+        h("div",{style:{fontSize:11,color:"#64748b",marginBottom:6,fontWeight:700}},"APIキー（sk-ant-...）"),
+        h("input",{
+          id:"apikey-field",
+          type:"password",
+          placeholder:"sk-ant-api03-xxxxxxxxxx...",
+          defaultValue:localStorage.getItem("hk-apikey")||"",
+          style:{...S.inp,fontFamily:"monospace",fontSize:13,marginBottom:10}
+        }),
+        h("button",{
+          style:S.btn(),
+          onClick:()=>{
+            const k=document.getElementById("apikey-field").value.trim();
+            if(!k){alert("APIキーを入力してください");return;}
+            if(!k.startsWith("sk-ant-")){alert("正しいAPIキーを入力してください\n（sk-ant- で始まる文字列）");return;}
+            localStorage.setItem("hk-apikey",k);
+            alert("✅ APIキーを保存しました！\nAI評価機能が使えるようになりました。");
+          }
+        },"💾 APIキーを保存"),
+        h("div",{style:{marginTop:10}}),
+        h("button",{
+          style:{...S.btn("s"),marginTop:4},
+          onClick:()=>{
+            if(confirm("APIキーを削除しますか？")){
+              localStorage.removeItem("hk-apikey");
+              document.getElementById("apikey-field").value="";
+              alert("APIキーを削除しました");
+            }
+          }
+        },"🗑️ APIキーを削除")
+      ),
+      h("div",{style:S.card},
+        h("div",{style:S.ct},"📋 APIキーの取得方法"),
+        [
+          ["1","https://console.anthropic.com にアクセス"],
+          ["2","ログイン（アカウントがなければ無料登録）"],
+          ["3","左メニュー「API Keys」→「Create Key」"],
+          ["4","sk-ant-... で始まるキーをコピー"],
+          ["5","上の入力欄に貼り付けて「保存」"],
+        ].map(([n,t])=>h("div",{key:n,style:{display:"flex",gap:10,padding:"7px 0",borderBottom:"1px solid rgba(255,255,255,.04)"}},
+          h("span",{style:{width:20,height:20,borderRadius:"50%",background:"rgba(99,102,241,.3)",
+            color:"#818cf8",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",
+            justifyContent:"center",flexShrink:0}},n),
+          h("span",{style:{fontSize:12,color:"#94a3b8",lineHeight:1.6}},t)
+        ))
+      ),
+      h("div",{style:{...S.card,background:"rgba(34,197,94,.04)",borderColor:"rgba(34,197,94,.15)"}},
+        h("div",{style:S.ct},"💰 料金の目安"),
+        h("div",{style:{fontSize:12,color:"#94a3b8",lineHeight:2}},
+          "1回のAI評価：約0.3〜0.5円",h("br"),
+          "毎日1回使用：月額 約10〜15円",h("br"),
+          "$5チャージで数年分使えます"
+        )
+      )
     ),
 
     // ══ PROFILE ══
