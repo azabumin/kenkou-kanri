@@ -461,12 +461,19 @@ ${meals||"記録なし"}
 5. 本日の推奨アクション3つ（個人状況に合わせて）
 6. 受診が必要かどうか`;
       const res=await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1200,messages:[{role:"user",content:prompt}]})
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "x-api-key":"",
+          "anthropic-version":"2023-06-01",
+          "anthropic-dangerous-direct-browser-access":"true"
+        },
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1200,messages:[{role:"user",content:prompt}]})
       });
+      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||res.status);}
       const data=await res.json();
       setAiResult(data.content?.find(b=>b.type==="text")?.text||"応答なし");
-    }catch{setAiResult("AI評価中にエラーが発生しました。");}
+    }catch(e){setAiResult("⚠️ AI評価エラー: "+e.message);}
     setAiLoading(false);
   };
 
@@ -531,13 +538,20 @@ ${today} (${new Date(today).toLocaleDateString("ja-JP",{weekday:"long"})})
 ⚠️ 今日の注意点
 （今日特に気をつけること）`;
       const res=await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content:prompt}]})
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "x-api-key":"",
+          "anthropic-version":"2023-06-01",
+          "anthropic-dangerous-direct-browser-access":"true"
+        },
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages:[{role:"user",content:prompt}]})
       });
+      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e?.error?.message||res.status);}
       const data=await res.json();
       setMorningAdvice(data.content?.find(b=>b.type==="text")?.text||"応答なし");
       setMorningDate(today);
-    }catch(e){setMorningAdvice("アドバイスの取得中にエラーが発生しました。");}
+    }catch(e){setMorningAdvice("⚠️ アドバイスエラー: "+e.message);}
     setMorningLoading(false);
   };
 
