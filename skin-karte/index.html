@@ -101,6 +101,7 @@
   }
   .tag.small{padding:2px 8px; font-size:11px;}
   .tag.member{background:#fdeccf; color:#a06a1a;}
+  .tag.category{background:#e3ecfa; color:#3f6bb0;}
   .history-item{border-left:2px solid var(--pink); padding:8px 0 8px 12px; margin-bottom:8px;}
   .history-date{font-size:11px; color:var(--sub);}
   .history-type{font-size:13px; font-weight:600;}
@@ -386,6 +387,13 @@
       <input id="prod-name" placeholder="例）モイストリペアクリーム">
       <label>ブランド／ライン名（任意）</label>
       <input id="prod-brand" placeholder="例）リマンコリア ◯◯ライン">
+      <label>商品カテゴリ</label>
+      <select id="prod-category">
+        <option value="化粧品">化粧品（スキンケア）</option>
+        <option value="シャンプー・ヘアケア">シャンプー・ヘアケア</option>
+        <option value="ボディケア">ボディケア</option>
+        <option value="その他">その他</option>
+      </select>
       <label>対応する肌タイプ（複数選択可）</label>
       <div class="checkbox-group">
         <label><input type="checkbox" class="prod-type-check" value="乾燥肌"> 乾燥肌</label>
@@ -798,6 +806,7 @@ function renderHistory(memberId){
 function showAddProduct(){
   document.getElementById("prod-name").value = "";
   document.getElementById("prod-brand").value = "";
+  document.getElementById("prod-category").value = "化粧品";
   document.getElementById("prod-desc").value = "";
   document.querySelectorAll(".prod-type-check").forEach(c=>c.checked=false);
   showView("view-add-product");
@@ -805,11 +814,12 @@ function showAddProduct(){
 function submitAddProduct(){
   const name = document.getElementById("prod-name").value.trim();
   const brand = document.getElementById("prod-brand").value.trim();
+  const category = document.getElementById("prod-category").value;
   const desc = document.getElementById("prod-desc").value.trim();
   const types = Array.from(document.querySelectorAll(".prod-type-check:checked")).map(c=>c.value);
   if(!name){ toast("商品名を入力してください"); return; }
   if(types.length===0){ toast("対応する肌タイプを1つ以上選んでください"); return; }
-  DATA.products.push({ id: uid(), name, brand, desc, skinTypes: types, createdAt: new Date().toISOString() });
+  DATA.products.push({ id: uid(), name, brand, category, desc, skinTypes: types, createdAt: new Date().toISOString() });
   saveData(DATA);
   toast("商品を登録しました");
   goProducts();
@@ -836,11 +846,12 @@ function renderProductList(){
     div.style.flexDirection = "column";
     div.style.alignItems = "stretch";
     div.style.cursor = "default";
+    const category = p.category || "化粧品";
     const tagsHtml = p.skinTypes.map(t=>`<span class="tag small">${t}</span>`).join("");
     div.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:flex-start;">
         <div>
-          <div class="product-title">${escapeHtml(p.name)}</div>
+          <div class="product-title">${escapeHtml(p.name)} <span class="tag category small">${escapeHtml(category)}</span></div>
           <div class="product-sub">${escapeHtml(p.brand)||""}</div>
         </div>
         <button class="btn-danger" style="width:auto; padding:6px 10px;" onclick="deleteProduct('${p.id}')">削除</button>
@@ -852,9 +863,11 @@ function renderProductList(){
   });
 }
 
-/* 肌タイプ／敏感肌フラグから、登録済み商品をマッチングして返す */
+/* 肌タイプ／敏感肌フラグから、登録済み商品（化粧品カテゴリのみ）をマッチングして返す */
 function recommendProducts(skinType, sensitive){
   const matched = DATA.products.filter(p=>{
+    const category = p.category || "化粧品";
+    if(category !== "化粧品") return false; // シャンプー等は肌診断のおすすめ対象外
     const typeMatch = p.skinTypes.includes(skinType);
     const sensitiveMatch = sensitive && p.skinTypes.includes("敏感肌");
     return typeMatch || sensitiveMatch;
