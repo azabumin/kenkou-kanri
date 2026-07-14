@@ -184,6 +184,15 @@
       </div>
 
       <div class="card">
+        <h3>データの共有（PC⇔携帯）</h3>
+        <p style="font-size:12px; color:var(--sub); margin:0 0 10px;">このアプリのデータは今お使いの端末の中だけに保存されています。別の端末でも同じデータを使いたい場合は、こちらから書き出し・読み込みをしてください。</p>
+        <button class="btn-sub" onclick="exportData()">📤 データを書き出す（保存）</button>
+        <div style="height:8px;"></div>
+        <input type="file" id="import-file-input" accept="application/json" class="hidden">
+        <button class="btn-outline" onclick="document.getElementById('import-file-input').click()">📥 データを読み込む</button>
+      </div>
+
+      <div class="card">
         <h3>月次ポイント集計（正規会員）</h3>
         <label>対象月</label>
         <input type="month" id="summary-month" onchange="renderMonthlyPointsSummary()">
@@ -394,6 +403,19 @@
         <option value="ボディケア">ボディケア</option>
         <option value="その他">その他</option>
       </select>
+      <label>商品画像（任意）</label>
+      <div class="cam-placeholder" style="padding:14px 0;">
+        <img id="prod-image-preview" class="hidden" style="width:140px; height:140px; object-fit:cover; border-radius:10px; display:block; margin:0 auto;">
+        <div id="prod-image-empty-hint">
+          <div class="emoji">🧴</div>
+          <p style="font-size:12px; color:var(--sub); margin-top:6px;">画像未選択</p>
+        </div>
+      </div>
+      <input type="file" id="prod-image-input" accept="image/*" class="hidden">
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button class="btn-outline" type="button" onclick="document.getElementById('prod-image-input').click()">🖼 画像を選ぶ</button>
+        <button class="btn-outline" type="button" id="prod-image-remove-btn" style="display:none;" onclick="removeProductImage()">画像を削除</button>
+      </div>
       <label>対応する肌タイプ（複数選択可）</label>
       <div class="checkbox-group">
         <label><input type="checkbox" class="prod-type-check" value="乾燥肌"> 乾燥肌</label>
@@ -455,6 +477,49 @@ let DATA = loadData();
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 const SKIN_TYPES = ["乾燥肌","脂性肌","混合肌","普通肌"];
+
+/* ===================== データの書き出し／読み込み（端末間の共有用） ===================== */
+function exportData(){
+  const json = JSON.stringify(DATA, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const today = new Date().toISOString().split("T")[0];
+  a.download = `肌カルテデータ_${today}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast("データを書き出しました");
+}
+function handleImportFile(file){
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const imported = JSON.parse(e.target.result);
+      if(!imported || typeof imported !== "object"){ toast("読み込めないファイルです"); return; }
+      const mergeArr = (current, incoming) => {
+        const map = new Map(current.map(x=>[x.id,x]));
+        (incoming||[]).forEach(x=>map.set(x.id,x)); // 同じIDがあれば読み込んだ側で上書き
+        return Array.from(map.values());
+      };
+      DATA.members = mergeArr(DATA.members, imported.members);
+      DATA.diagnoses = mergeArr(DATA.diagnoses, imported.diagnoses);
+      DATA.products = mergeArr(DATA.products, imported.products);
+      DATA.purchases = mergeArr(DATA.purchases, imported.purchases);
+      if(imported.settings && imported.settings.pointRate) DATA.settings.pointRate = imported.settings.pointRate;
+      saveData(DATA);
+      renderMemberList();
+      toast(`データを取り込みました（顧客 ${DATA.members.length}件・商品 ${DATA.products.length}件）`);
+    }catch(err){
+      toast("ファイルの読み込みに失敗しました");
+    }
+  };
+  reader.readAsText(file);
+  document.getElementById("import-file-input").value = "";
+}
 
 /* ===================== 画面遷移 ===================== */
 let currentMemberId = null;
@@ -778,7 +843,7 @@ function renderHistory(memberId){
     const detailId = `history-detail-${idx}`;
     const prodHtml = recommendProducts(d.skinType, d.sensitive).map(p=>`
       <div class="product-card" style="margin-top:6px;">
-        <div class="product-icon">🧴</div>
+        ${p.image?`<img src="${p.image}" style="width:36px; height:36px; object-fit:cover; border-radius:8px; flex-shrink:0;">`:`<div class="product-icon">🧴</div>`}
         <div>
           <div class="product-name">${escapeHtml(p.name)}</div>
           <div class="product-desc">${escapeHtml(p.brand)||""}${p.desc?"　"+escapeHtml(p.desc):""}</div>
@@ -804,6 +869,55 @@ function renderHistory(memberId){
 
 /* ===================== 商品管理（リマンコリア商品） ===================== */
 let editingProductId = null;
+let selectedProductImage = null; // 選択中の商品画像（dataURL、圧縮済み）
+
+function resetProductImageField(){
+  selectedProductImage = null;
+  document.getElementById("prod-image-input").value = "";
+  const preview = document.getElementById("prod-image-preview");
+  preview.classList.add("hidden");
+  preview.src = "";
+  document.getElementById("prod-image-empty-hint").classList.remove("hidden");
+  document.getElementById("prod-image-remove-btn").style.display = "none";
+}
+function setProductImagePreview(dataUrl){
+  selectedProductImage = dataUrl;
+  const preview = document.getElementById("prod-image-preview");
+  if(dataUrl){
+    preview.src = dataUrl;
+    preview.classList.remove("hidden");
+    document.getElementById("prod-image-empty-hint").classList.add("hidden");
+    document.getElementById("prod-image-remove-btn").style.display = "block";
+  }else{
+    preview.classList.add("hidden");
+    preview.src = "";
+    document.getElementById("prod-image-empty-hint").classList.remove("hidden");
+    document.getElementById("prod-image-remove-btn").style.display = "none";
+  }
+}
+function removeProductImage(){
+  setProductImagePreview(null);
+  document.getElementById("prod-image-input").value = "";
+}
+function handleProductImageFile(file){
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxW = 400;
+      const scale = Math.min(1, maxW / img.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      setProductImagePreview(canvas.toDataURL("image/jpeg", 0.8));
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
 
 function showAddProduct(){
   editingProductId = null;
@@ -812,6 +926,7 @@ function showAddProduct(){
   document.getElementById("prod-category").value = "化粧品";
   document.getElementById("prod-desc").value = "";
   document.querySelectorAll(".prod-type-check").forEach(c=>c.checked=false);
+  resetProductImageField();
   document.getElementById("add-product-title").textContent = "新規商品登録";
   document.getElementById("add-product-submit-btn").textContent = "登録する";
   showView("view-add-product");
@@ -827,6 +942,7 @@ function editProduct(id){
   document.querySelectorAll(".prod-type-check").forEach(c=>{
     c.checked = (p.skinTypes||[]).includes(c.value);
   });
+  setProductImagePreview(p.image || null);
   document.getElementById("add-product-title").textContent = "商品を編集";
   document.getElementById("add-product-submit-btn").textContent = "更新する";
   showView("view-add-product");
@@ -837,6 +953,7 @@ function submitAddProduct(){
   const category = document.getElementById("prod-category").value;
   const desc = document.getElementById("prod-desc").value.trim();
   const types = Array.from(document.querySelectorAll(".prod-type-check:checked")).map(c=>c.value);
+  const image = selectedProductImage;
   if(!name){ toast("商品名を入力してください"); return; }
   if(types.length===0){ toast("対応する肌タイプを1つ以上選んでください"); return; }
   if(editingProductId){
@@ -847,6 +964,7 @@ function submitAddProduct(){
       p.category = category;
       p.desc = desc;
       p.skinTypes = types;
+      p.image = image;
     }
     editingProductId = null;
     saveData(DATA);
@@ -854,7 +972,7 @@ function submitAddProduct(){
     goProducts();
     return;
   }
-  DATA.products.push({ id: uid(), name, brand, category, desc, skinTypes: types, createdAt: new Date().toISOString() });
+  DATA.products.push({ id: uid(), name, brand, category, desc, skinTypes: types, image, createdAt: new Date().toISOString() });
   saveData(DATA);
   toast("商品を登録しました");
   goProducts();
@@ -883,11 +1001,17 @@ function renderProductList(){
     div.style.cursor = "default";
     const category = p.category || "化粧品";
     const tagsHtml = p.skinTypes.map(t=>`<span class="tag small">${t}</span>`).join("");
+    const imageHtml = p.image
+      ? `<img src="${p.image}" style="width:48px; height:48px; object-fit:cover; border-radius:8px; flex-shrink:0;">`
+      : `<div class="product-icon" style="flex-shrink:0;">🧴</div>`;
     div.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-        <div>
-          <div class="product-title">${escapeHtml(p.name)} <span class="tag category small">${escapeHtml(category)}</span></div>
-          <div class="product-sub">${escapeHtml(p.brand)||""}</div>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+        <div style="display:flex; gap:10px; align-items:flex-start; min-width:0;">
+          ${imageHtml}
+          <div style="min-width:0;">
+            <div class="product-title">${escapeHtml(p.name)} <span class="tag category small">${escapeHtml(category)}</span></div>
+            <div class="product-sub">${escapeHtml(p.brand)||""}</div>
+          </div>
         </div>
         <div style="display:flex; gap:6px; flex-shrink:0;">
           <button class="btn-outline" style="width:auto; padding:6px 10px;" onclick="editProduct('${p.id}')">編集</button>
@@ -921,8 +1045,11 @@ function renderProductCardsInto(box, products){
   products.forEach(p=>{
     const div = document.createElement("div");
     div.className = "product-card";
+    const iconHtml = p.image
+      ? `<img src="${p.image}" style="width:36px; height:36px; object-fit:cover; border-radius:8px; flex-shrink:0;">`
+      : `<div class="product-icon">🧴</div>`;
     div.innerHTML = `
-      <div class="product-icon">🧴</div>
+      ${iconHtml}
       <div>
         <div class="product-name">${escapeHtml(p.name)}</div>
         <div class="product-desc">${escapeHtml(p.brand)||""}${p.desc?"　"+escapeHtml(p.desc):""}</div>
@@ -1116,6 +1243,8 @@ document.getElementById("purchase-amount").addEventListener("input", e=>{
   const pts = calcPoints(amount);
   document.getElementById("purchase-point-preview").textContent = amount>0 ? `付与予定ポイント：${pts}pt` : "";
 });
+document.getElementById("import-file-input").addEventListener("change", e=>handleImportFile(e.target.files[0]));
+document.getElementById("prod-image-input").addEventListener("change", e=>handleProductImageFile(e.target.files[0]));
 setActiveTab("tab-home");
 renderMemberList();
 </script>
