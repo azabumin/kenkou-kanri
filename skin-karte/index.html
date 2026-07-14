@@ -379,9 +379,9 @@
     <button class="fab" onclick="showAddProduct()">＋ 新規商品を登録</button>
   </div>
 
-  <!-- 新規商品登録 -->
+  <!-- 新規商品登録／編集 -->
   <div id="view-add-product" class="view hidden">
-    <header><span class="back" onclick="goProducts()">←</span><h1>新規商品登録</h1></header>
+    <header><span class="back" onclick="goProducts()">←</span><h1 id="add-product-title">新規商品登録</h1></header>
     <div class="card">
       <label>商品名</label>
       <input id="prod-name" placeholder="例）モイストリペアクリーム">
@@ -405,7 +405,7 @@
       <label>説明・メモ（任意）</label>
       <textarea id="prod-desc" rows="3" placeholder="効果や使い方など"></textarea>
     </div>
-    <button class="btn-primary" onclick="submitAddProduct()">登録する</button>
+    <button class="btn-primary" id="add-product-submit-btn" onclick="submitAddProduct()">登録する</button>
   </div>
 
   <div id="tabbar">
@@ -803,12 +803,32 @@ function renderHistory(memberId){
 }
 
 /* ===================== 商品管理（リマンコリア商品） ===================== */
+let editingProductId = null;
+
 function showAddProduct(){
+  editingProductId = null;
   document.getElementById("prod-name").value = "";
   document.getElementById("prod-brand").value = "";
   document.getElementById("prod-category").value = "化粧品";
   document.getElementById("prod-desc").value = "";
   document.querySelectorAll(".prod-type-check").forEach(c=>c.checked=false);
+  document.getElementById("add-product-title").textContent = "新規商品登録";
+  document.getElementById("add-product-submit-btn").textContent = "登録する";
+  showView("view-add-product");
+}
+function editProduct(id){
+  const p = DATA.products.find(x=>x.id===id);
+  if(!p) return;
+  editingProductId = id;
+  document.getElementById("prod-name").value = p.name || "";
+  document.getElementById("prod-brand").value = p.brand || "";
+  document.getElementById("prod-category").value = p.category || "化粧品";
+  document.getElementById("prod-desc").value = p.desc || "";
+  document.querySelectorAll(".prod-type-check").forEach(c=>{
+    c.checked = (p.skinTypes||[]).includes(c.value);
+  });
+  document.getElementById("add-product-title").textContent = "商品を編集";
+  document.getElementById("add-product-submit-btn").textContent = "更新する";
   showView("view-add-product");
 }
 function submitAddProduct(){
@@ -819,6 +839,21 @@ function submitAddProduct(){
   const types = Array.from(document.querySelectorAll(".prod-type-check:checked")).map(c=>c.value);
   if(!name){ toast("商品名を入力してください"); return; }
   if(types.length===0){ toast("対応する肌タイプを1つ以上選んでください"); return; }
+  if(editingProductId){
+    const p = DATA.products.find(x=>x.id===editingProductId);
+    if(p){
+      p.name = name;
+      p.brand = brand;
+      p.category = category;
+      p.desc = desc;
+      p.skinTypes = types;
+    }
+    editingProductId = null;
+    saveData(DATA);
+    toast("商品を更新しました");
+    goProducts();
+    return;
+  }
   DATA.products.push({ id: uid(), name, brand, category, desc, skinTypes: types, createdAt: new Date().toISOString() });
   saveData(DATA);
   toast("商品を登録しました");
@@ -854,7 +889,10 @@ function renderProductList(){
           <div class="product-title">${escapeHtml(p.name)} <span class="tag category small">${escapeHtml(category)}</span></div>
           <div class="product-sub">${escapeHtml(p.brand)||""}</div>
         </div>
-        <button class="btn-danger" style="width:auto; padding:6px 10px;" onclick="deleteProduct('${p.id}')">削除</button>
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <button class="btn-outline" style="width:auto; padding:6px 10px;" onclick="editProduct('${p.id}')">編集</button>
+          <button class="btn-danger" style="width:auto; padding:6px 10px;" onclick="deleteProduct('${p.id}')">削除</button>
+        </div>
       </div>
       <div style="margin-top:8px;">${tagsHtml}</div>
       ${p.desc?`<div class="product-sub" style="margin-top:6px;">${escapeHtml(p.desc)}</div>`:""}
